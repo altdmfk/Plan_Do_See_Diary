@@ -739,13 +739,35 @@ async function runAllTests() {
 
   // Test Time Overrun counted in delayedCount
   appState.state.todos = [
-    { id: 'todo-overrun', plan_id: 'plan-1', title: 'Overrun Task', due_date: '2099-01-01', estimated_minutes: 30, is_completed: true }
+    { id: 'todo-overrun', plan_id: 'plan-1', title: 'Overrun Task', priority: 'low', due_date: '2099-01-01', estimated_minutes: 30, is_completed: true }
   ];
   appState.state.do_logs = [
     { id: 'log-overrun', todo_id: 'todo-overrun', actual_minutes: 45, blocked_reason: '' }
   ];
   const overrunMetrics = appState.getKSTMetrics('plan-1');
   assert(overrunMetrics.delayedCount === 1, 'Task with actual minutes > estimated minutes is counted in delayedCount (Time Overrun)');
+
+  // Test Plan Priority filter isolation from To Do Priority filter
+  appState.setFilters({ planPriority: 'high', priority: 'all' });
+  const highPlans = appState.getFilteredPlans();
+  assert(highPlans.length === 1 && highPlans[0].priority === 'high', 'Plan Priority filter filters only Plans');
+
+  appState.setFilters({ planPriority: 'all', priority: 'low' });
+  const lowTodos = appState.getFilteredTodos();
+  assert(lowTodos.length === 1 && lowTodos[0].priority === 'low', 'To Do Priority filter filters only To Dos');
+
+  // Test Plan Sort & To Do Sort isolation
+  appState.setFilters({ planPriority: 'all', planSort: 'priority_desc' });
+  const sortedPlans = appState.getFilteredPlans();
+  assert(sortedPlans[0].priority === 'high' && sortedPlans[1].priority === 'medium', 'Plan Sort orders plans by priority descending');
+
+  appState.state.todos = [
+    { id: 'todo-b', plan_id: 'plan-1', title: 'Task B', due_date: '2026-09-10', priority: 'medium' },
+    { id: 'todo-a', plan_id: 'plan-1', title: 'Task A', due_date: '2026-08-30', priority: 'medium' }
+  ];
+  appState.setFilters({ priority: 'all', sort: 'due_asc' });
+  const sortedTodos = appState.getFilteredTodos();
+  assert(sortedTodos.length === 2 && sortedTodos[0].id === 'todo-a' && sortedTodos[1].id === 'todo-b', 'To Do Sort orders todos by due date ascending');
 
   console.log('\n====================================================');
   console.log(`🎉 ALL ${passedTests}/${totalTests} TESTS PASSED SUCCESSFULLY!`);

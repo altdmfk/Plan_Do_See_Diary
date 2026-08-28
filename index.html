@@ -62,30 +62,8 @@
         </select>
 
         <div class="search-input-wrap">
-          <input type="text" id="searchInput" class="input-field" placeholder="계획, 할 일, 태그 검색" style="width: 200px;">
+          <input type="text" id="searchInput" class="input-field" placeholder="계획, 할 일, 태그 검색" style="width: 240px;">
         </div>
-
-        <select id="priorityFilter" class="select-field">
-          <option value="all">전체 우선순위</option>
-          <option value="urgent">긴급</option>
-          <option value="high">높음</option>
-          <option value="medium">보통</option>
-          <option value="low">낮음</option>
-        </select>
-
-        <select id="statusFilter" class="select-field">
-          <option value="all">전체 상태</option>
-          <option value="in_progress">진행 중</option>
-          <option value="completed">완료됨</option>
-          <option value="delayed">지연됨</option>
-        </select>
-
-        <select id="sortSelect" class="select-field">
-          <option value="order_asc">기본 순서</option>
-          <option value="due_asc">마감일 순</option>
-          <option value="priority_desc">우선순위 순</option>
-          <option value="created_desc">최신 등록 순</option>
-        </select>
       </div>
 
       <div class="filter-group">
@@ -103,7 +81,22 @@
               <div class="col-title">1. Plan</div>
               <span class="col-count-badge" id="planColCount">0</span>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" id="colAddPlanBtn">+ 계획 추가</button>
+            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+              <select id="planPriorityFilter" class="select-field" style="font-size: 0.76rem; padding: 0.2rem 0.45rem; height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-bg-surface); color: var(--color-text-main); font-weight: 600;">
+                <option value="all">전체</option>
+                <option value="urgent">긴급</option>
+                <option value="high">높음</option>
+                <option value="medium">보통</option>
+                <option value="low">낮음</option>
+              </select>
+              <select id="planSortSelect" class="select-field" style="font-size: 0.76rem; padding: 0.2rem 0.45rem; height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-bg-surface); color: var(--color-text-main); font-weight: 600;">
+                <option value="created_desc">최신 등록</option>
+                <option value="end_asc">마감일</option>
+                <option value="start_asc">시작일</option>
+                <option value="priority_desc">우선순위</option>
+              </select>
+              <button type="button" class="btn btn-primary btn-sm" id="colAddPlanBtn">+ 추가</button>
+            </div>
           </div>
           <div class="col-body" id="planColBody">
             <!-- Plan cards rendered dynamically -->
@@ -117,7 +110,27 @@
               <div class="col-title">2. Do</div>
               <span class="col-count-badge" id="doColCount">0</span>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" id="colAddTodoBtn">+ 할 일 추가</button>
+            <div style="display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+              <select id="statusFilter" class="select-field" style="font-size: 0.76rem; padding: 0.2rem 0.45rem; height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-bg-surface); color: var(--color-text-main); font-weight: 600;">
+                <option value="all">상태: 전체</option>
+                <option value="in_progress">진행 중</option>
+                <option value="completed">완료됨</option>
+                <option value="delayed">지연됨</option>
+              </select>
+              <select id="priorityFilter" class="select-field" style="font-size: 0.76rem; padding: 0.2rem 0.45rem; height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-bg-surface); color: var(--color-text-main); font-weight: 600;">
+                <option value="all">전체</option>
+                <option value="urgent">긴급</option>
+                <option value="high">높음</option>
+                <option value="medium">보통</option>
+                <option value="low">낮음</option>
+              </select>
+              <select id="sortSelect" class="select-field" style="font-size: 0.76rem; padding: 0.2rem 0.45rem; height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-bg-surface); color: var(--color-text-main); font-weight: 600;">
+                <option value="due_asc">마감일</option>
+                <option value="priority_desc">우선순위</option>
+                <option value="created_desc">최신 등록</option>
+              </select>
+              <button type="button" class="btn btn-primary btn-sm" id="colAddTodoBtn">+ 추가</button>
+            </div>
           </div>
           <div class="col-body" id="doColBody">
             <!-- To Do cards rendered dynamically -->
@@ -455,6 +468,6 @@
   <script src="env.js" onerror="/* optional environment */"></script>
 
   <!-- Application Bootstrap Script -->
-  <script type="module" src="js/app.js?v=2.0.28"></script>
+  <script type="module" src="js/app.js?v=2.0.35"></script>
 </body>
 </html>

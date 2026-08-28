@@ -22,11 +22,13 @@ class StateStore {
       selectedPlanId: null,
       filters: {
         planId: '', // '' = all plans, or specific planId
+        planPriority: 'all', // Dedicated Plan priority filter (all, urgent, high, medium, low)
+        planSort: 'created_desc', // Plan sort: created_desc, end_asc, start_asc, priority_desc
         search: '',
-        priority: 'all',
+        priority: 'all', // Dedicated Do priority filter (all, urgent, high, medium, low)
         tags: [], // Multi-tag array support
         status: 'all',
-        sort: 'order_asc' // order_asc, due_asc, priority_desc, created_desc
+        sort: 'due_asc' // Do sort: due_asc, priority_desc, created_desc
       },
       activeMobileTab: 'plan', // 'plan' | 'do' | 'see'
       loading: false
@@ -219,10 +221,14 @@ class StateStore {
 
   getFilteredPlans() {
     let list = this.state.plans;
-    const { search, priority, planId } = this.state.filters;
+    const { search, planPriority, planId, planSort } = this.state.filters;
 
     if (planId && planId !== '' && planId !== 'all') {
       list = list.filter(p => String(p.id) === String(planId));
+    }
+
+    if (planPriority && planPriority !== 'all') {
+      list = list.filter(p => p.priority === planPriority);
     }
 
     if (search && search.trim() !== '') {
@@ -244,9 +250,18 @@ class StateStore {
       );
     }
 
-    if (priority && priority !== 'all') {
-      list = list.filter(p => p.priority === priority);
-    }
+    const priorityWeights = { urgent: 4, high: 3, medium: 2, low: 1 };
+    const sortMode = planSort || 'created_desc';
+    list.sort((a, b) => {
+      if (sortMode === 'end_asc') {
+        return (a.period_end || '').localeCompare(b.period_end || '');
+      } else if (sortMode === 'start_asc') {
+        return (a.period_start || '').localeCompare(b.period_start || '');
+      } else if (sortMode === 'priority_desc') {
+        return (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
+      }
+      return (b.created_at || '').localeCompare(a.created_at || '');
+    });
 
     return list;
   }
@@ -294,15 +309,14 @@ class StateStore {
     }
 
     const priorityWeights = { urgent: 4, high: 3, medium: 2, low: 1 };
+    const todoSort = sort || 'due_asc';
     list.sort((a, b) => {
-      if (sort === 'due_asc') {
-        return (a.due_date || '').localeCompare(b.due_date || '');
-      } else if (sort === 'priority_desc') {
+      if (todoSort === 'priority_desc') {
         return (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
-      } else if (sort === 'created_desc') {
+      } else if (todoSort === 'created_desc') {
         return (b.created_at || '').localeCompare(a.created_at || '');
       }
-      return (a.sort_order || 0) - (b.sort_order || 0);
+      return (a.due_date || '').localeCompare(b.due_date || '');
     });
 
     return list;

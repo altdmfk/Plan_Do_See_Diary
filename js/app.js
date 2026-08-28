@@ -223,6 +223,14 @@ function bindFilterControls() {
     }
   });
 
+  document.getElementById('planPriorityFilter')?.addEventListener('change', (e) => {
+    appState.setFilters({ planPriority: e.target.value });
+  });
+
+  document.getElementById('planSortSelect')?.addEventListener('change', (e) => {
+    appState.setFilters({ planSort: e.target.value });
+  });
+
   document.getElementById('searchInput').addEventListener('input', (e) => {
     appState.setFilters({ search: e.target.value });
   });

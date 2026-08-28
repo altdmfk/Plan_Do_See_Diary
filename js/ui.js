@@ -574,12 +574,26 @@ export function applyLanguageTranslations() {
   // Filter bar
   document.getElementById('searchInput').placeholder = t('searchPlaceholder');
 
-  // Priority Filter options
+  // Plan Priority Filter options in Column 1
+  const planPriorityFilter = document.getElementById('planPriorityFilter');
+  if (planPriorityFilter) {
+    const cur = planPriorityFilter.value;
+    planPriorityFilter.innerHTML = `
+      <option value="all">${t('allPlanPriorities')}</option>
+      <option value="urgent">${t('priorityUrgent')}</option>
+      <option value="high">${t('priorityHigh')}</option>
+      <option value="medium">${t('priorityMedium')}</option>
+      <option value="low">${t('priorityLow')}</option>
+    `;
+    planPriorityFilter.value = cur;
+  }
+
+  // To Do Priority Filter options in Filter bar
   const priorityFilter = document.getElementById('priorityFilter');
   if (priorityFilter) {
     const cur = priorityFilter.value;
     priorityFilter.innerHTML = `
-      <option value="all">${t('allPriorities')}</option>
+      <option value="all">${t('allTodoPriorities')}</option>
       <option value="urgent">${t('priorityUrgent')}</option>
       <option value="high">${t('priorityHigh')}</option>
       <option value="medium">${t('priorityMedium')}</option>
@@ -601,12 +615,24 @@ export function applyLanguageTranslations() {
     statusFilter.value = cur;
   }
 
-  // Sort Filter options
+  // Plan Sort Filter options
+  const planSortSelect = document.getElementById('planSortSelect');
+  if (planSortSelect) {
+    const cur = planSortSelect.value;
+    planSortSelect.innerHTML = `
+      <option value="created_desc">${t('sortCreated')}</option>
+      <option value="end_asc">${t('sortDueDate')}</option>
+      <option value="start_asc">${t('sortStartDate')}</option>
+      <option value="priority_desc">${t('sortPriority')}</option>
+    `;
+    planSortSelect.value = cur;
+  }
+
+  // To Do Sort Filter options
   const sortSelect = document.getElementById('sortSelect');
   if (sortSelect) {
     const cur = sortSelect.value;
     sortSelect.innerHTML = `
-      <option value="order_asc">${t('sortManual')}</option>
       <option value="due_asc">${t('sortDueDate')}</option>
       <option value="priority_desc">${t('sortPriority')}</option>
       <option value="created_desc">${t('sortCreated')}</option>
