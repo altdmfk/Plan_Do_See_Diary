@@ -19,6 +19,7 @@ class SupabaseScopeEngine {
   constructor() {
     this.currentScope = storage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_SCOPE) || CONFIG.DEFAULT_SCOPE;
     this.memoryStore = new Map();
+    this.inFlightLocks = new Map();
 
     const hasUrl = Boolean(CONFIG.SUPABASE.URL && CONFIG.SUPABASE.URL.trim().length > 0);
     const hasKey = Boolean(CONFIG.SUPABASE.ANON_KEY && CONFIG.SUPABASE.ANON_KEY.trim().length > 0);
@@ -265,6 +266,19 @@ class SupabaseScopeEngine {
     if (cleanHours <= 0) {
       throw new Error('목표 예상 시간은 최소 1분 이상이어야 합니다.');
     }
+
+    const signature = `${scope}|plan|${cleanTitle}|${planData.period_start}|${planData.period_end}|${cleanHours}`;
+    const now = Date.now();
+    const lastTime = this.inFlightLocks.get(signature);
+    if (lastTime && (now - lastTime) < 1500) {
+      if (!this.isCloudConfigured) {
+        const data = this._loadScopeData(scope);
+        const existing = data.plans.find(p => p.title === cleanTitle && p.period_start === planData.period_start && p.period_end === planData.period_end);
+        if (existing) return existing;
+      }
+    }
+    this.inFlightLocks.set(signature, now);
+
     const encryptedCriteria = await encryptText(cleanCriteria);
 
     const payload = {
@@ -398,9 +412,17 @@ class SupabaseScopeEngine {
     }
 
     const data = this._loadScopeData(scope);
-    data.plans = data.plans.filter(p => !(p.id === planId && p.scope === scope));
+    const planIndex = data.plans.findIndex(p => p.id === planId && p.scope === scope);
+    if (planIndex === -1) {
+      const err = new Error('계획을 찾을 수 없거나 삭제 권한이 없습니다. (PostgreSQL RLS 404/403)');
+      err.status = 403;
+      throw err;
+    }
+    const childTodoIds = new Set(data.todos.filter(t => t.plan_id === planId).map(t => t.id));
+    data.plans.splice(planIndex, 1);
     data.plan_histories = data.plan_histories.filter(h => h.plan_id !== planId);
     data.todos = data.todos.filter(t => t.plan_id !== planId);
+    data.do_logs = data.do_logs.filter(l => !childTodoIds.has(l.todo_id));
     data.see_reviews = data.see_reviews.filter(r => r.plan_id !== planId);
     this._saveScopeData(scope, data);
     return { success: true };
@@ -414,6 +436,19 @@ class SupabaseScopeEngine {
     if (cleanMin <= 0) {
       throw new Error('할 일 예상 소요 시간은 최소 1분 이상이어야 합니다.');
     }
+
+    const signature = `${scope}|todo|${todoData.plan_id}|${cleanTitle}|${todoData.due_date}|${cleanMin}`;
+    const now = Date.now();
+    const lastTime = this.inFlightLocks.get(signature);
+    if (lastTime && (now - lastTime) < 1500) {
+      if (!this.isCloudConfigured) {
+        const data = this._loadScopeData(scope);
+        const existing = data.todos.find(t => t.plan_id === todoData.plan_id && t.title === cleanTitle && t.due_date === todoData.due_date);
+        if (existing) return existing;
+      }
+    }
+    this.inFlightLocks.set(signature, now);
+
     const cleanTags = (Array.isArray(todoData.tags) ? todoData.tags : []).map(t => sanitizeText(t, 50)).filter(Boolean);
     const encryptedDesc = await encryptText(cleanDesc);
 
@@ -441,14 +476,19 @@ class SupabaseScopeEngine {
 
     const data = this._loadScopeData(scope);
     const targetPlan = data.plans.find(p => String(p.id) === String(todoData.plan_id));
-    if (targetPlan && targetPlan.estimated_hours !== undefined) {
-      const planBudgetMinutes = parseInt(targetPlan.estimated_hours, 10) || 0;
-      const newTodoMinutes = parseInt(cleanMin, 10) || 0;
-      const otherTodos = data.todos.filter(t => String(t.plan_id) === String(todoData.plan_id));
-      const currentTotalMin = otherTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
-      const newTotalMin = currentTotalMin + newTodoMinutes;
-      if (planBudgetMinutes > 0 && newTotalMin > planBudgetMinutes) {
-        throw new Error(`할 일들의 예상 시간 합계(${newTotalMin}분)가 계획의 목표 시간(${planBudgetMinutes}분)을 초과할 수 없습니다.`);
+    if (targetPlan) {
+      if (targetPlan.period_end && todoData.due_date > targetPlan.period_end) {
+        throw new Error(`할 일 마감일(${todoData.due_date})은 연결된 계획의 종료일(${targetPlan.period_end})을 초과할 수 없습니다.`);
+      }
+      if (targetPlan.estimated_hours !== undefined) {
+        const planBudgetMinutes = parseInt(targetPlan.estimated_hours, 10) || 0;
+        const newTodoMinutes = parseInt(cleanMin, 10) || 0;
+        const otherTodos = data.todos.filter(t => String(t.plan_id) === String(todoData.plan_id));
+        const currentTotalMin = otherTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
+        const newTotalMin = currentTotalMin + newTodoMinutes;
+        if (planBudgetMinutes > 0 && newTotalMin > planBudgetMinutes) {
+          throw new Error(`할 일들의 예상 시간 합계(${newTotalMin}분)가 계획의 목표 시간(${planBudgetMinutes}분)을 초과할 수 없습니다.`);
+        }
       }
     }
 
@@ -546,7 +586,13 @@ class SupabaseScopeEngine {
     }
 
     const data = this._loadScopeData(scope);
-    data.todos = data.todos.filter(t => !(t.id === todoId && t.scope === scope));
+    const todoIndex = data.todos.findIndex(t => t.id === todoId && t.scope === scope);
+    if (todoIndex === -1) {
+      const err = new Error('할 일을 찾을 수 없거나 삭제 권한이 없습니다. (PostgreSQL RLS 404/403)');
+      err.status = 403;
+      throw err;
+    }
+    data.todos.splice(todoIndex, 1);
     data.do_logs = data.do_logs.filter(l => l.todo_id !== todoId);
     this._saveScopeData(scope, data);
     return { success: true };
@@ -617,6 +663,9 @@ class SupabaseScopeEngine {
     const scope = this.currentScope;
     const cleanBlocker = sanitizeText(logData.blocked_reason);
     const cleanMin = clampNum(logData.actual_minutes);
+    if (cleanMin <= 0) {
+      throw new Error('실제 소요 시간은 최소 1분 이상이어야 합니다.');
+    }
     const encryptedBlocker = await encryptText(cleanBlocker);
 
     if (this.isCloudConfigured) {
@@ -680,6 +729,11 @@ class SupabaseScopeEngine {
     }
 
     const data = this._loadScopeData(scope);
+    const targetPlan = data.plans.find(p => String(p.id) === String(reviewData.plan_id) && p.scope === scope);
+    if (!targetPlan) {
+      throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
+    }
+
     const newReview = {
       id: crypto.randomUUID(),
       ...payload,

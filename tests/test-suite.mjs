@@ -254,8 +254,175 @@ async function runAllTests() {
   const scopeAAfterDoubleImport = await dbClient.fetchAll('scope_a');
   assert(scopeAAfterDoubleImport.plans.length === 1, 'Repeated import produced 0 duplicate rows (idempotent upsert)');
 
+  // --- 4c. STRICT CROSS-SCOPE SERVER REJECTION TESTS (T06-C49 ~ T06-C54) ---
+  console.log('\n--- [4c] Strict Cross-Scope Server Rejection Tests (T06-C49 ~ T06-C54) ---');
+
+  // Ensure Scope A and Scope B both have active entities
+  dbClient.setSessionScope('scope_a');
+  const planInA = (await dbClient.fetchAll('scope_a')).plans[0];
+
+  dbClient.setSessionScope('scope_b');
+  const planInB = (await dbClient.fetchAll('scope_b')).plans[0];
+
+  // T06-C49: A 범위에서 B 자료를 직접 읽는 요청은 서버가 거부한다.
+  dbClient.setSessionScope('scope_a');
+  let c49Rejected = false;
+  try {
+    await dbClient.fetchAll('scope_b');
+  } catch (err) {
+    c49Rejected = (err.status === 403 || (err.message && err.message.includes('Forbidden')));
+  }
+  assert(c49Rejected, 'T06-C49: Server strictly rejected direct read of Scope B from Scope A (HTTP 403)');
+
+  // T06-C50: A 범위에서 B 자료를 직접 고치는 요청은 서버가 거부한다.
+  dbClient.setSessionScope('scope_a');
+  let c50Rejected = false;
+  try {
+    await dbClient.updatePlan(planInB.id, { title: 'Hacked by A' });
+  } catch (err) {
+    c50Rejected = true;
+  }
+  dbClient.setSessionScope('scope_b');
+  const scopeBPlanAfterTamper = (await dbClient.fetchAll('scope_b')).plans.find(p => p.id === planInB.id);
+  assert(c50Rejected && scopeBPlanAfterTamper.title !== 'Hacked by A', 'T06-C50: Server strictly rejected modifying Scope B plan from Scope A (DB unchanged)');
+
+  // T06-C51: A 범위에서 B 자료를 직접 지우는 요청은 서버가 거부한다.
+  dbClient.setSessionScope('scope_a');
+  let c51Rejected = false;
+  try {
+    await dbClient.deletePlan(planInB.id);
+  } catch (err) {
+    c51Rejected = true;
+  }
+  dbClient.setSessionScope('scope_b');
+  const scopeBPlanAfterDeleteAttempt = (await dbClient.fetchAll('scope_b')).plans.find(p => p.id === planInB.id);
+  assert(c51Rejected && Boolean(scopeBPlanAfterDeleteAttempt), 'T06-C51: Server strictly rejected deleting Scope B plan from Scope A (DB intact)');
+
+  // T06-C52: B 범위에서 A 자료를 직접 읽는 요청은 서버가 거부한다.
+  dbClient.setSessionScope('scope_b');
+  let c52Rejected = false;
+  try {
+    await dbClient.fetchAll('scope_a');
+  } catch (err) {
+    c52Rejected = (err.status === 403 || (err.message && err.message.includes('Forbidden')));
+  }
+  assert(c52Rejected, 'T06-C52: Server strictly rejected direct read of Scope A from Scope B (HTTP 403)');
+
+  // T06-C53: B 범위에서 A 자료를 직접 고치는 요청은 서버가 거부한다.
+  dbClient.setSessionScope('scope_b');
+  let c53Rejected = false;
+  try {
+    await dbClient.updatePlan(planInA.id, { title: 'Hacked by B' });
+  } catch (err) {
+    c53Rejected = true;
+  }
+  dbClient.setSessionScope('scope_a');
+  const scopeAPlanAfterTamper = (await dbClient.fetchAll('scope_a')).plans.find(p => p.id === planInA.id);
+  assert(c53Rejected && scopeAPlanAfterTamper.title !== 'Hacked by B', 'T06-C53: Server strictly rejected modifying Scope A plan from Scope B (DB unchanged)');
+
+  // T06-C54: B 범위에서 A 자료를 직접 지우는 요청은 서버가 거부한다.
+  dbClient.setSessionScope('scope_b');
+  let c54Rejected = false;
+  try {
+    await dbClient.deletePlan(planInA.id);
+  } catch (err) {
+    c54Rejected = true;
+  }
+  dbClient.setSessionScope('scope_a');
+  const scopeAPlanAfterDeleteAttempt = (await dbClient.fetchAll('scope_a')).plans.find(p => p.id === planInA.id);
+  assert(c54Rejected && Boolean(scopeAPlanAfterDeleteAttempt), 'T06-C54: Server strictly rejected deleting Scope A plan from Scope B (DB intact)');
+
+  // Cross-Scope Child Entity Operations (ToDos & See Reviews)
+  dbClient.setSessionScope('scope_b');
+  const todoInB = (await dbClient.fetchAll('scope_b')).todos[0];
+  dbClient.setSessionScope('scope_a');
+  let cTodoUpdateRejected = false;
+  try {
+    await dbClient.updateTodo(todoInB.id, { title: 'Cross Scope Hack' });
+  } catch (err) {
+    cTodoUpdateRejected = true;
+  }
+  assert(cTodoUpdateRejected, 'Server strictly rejected modifying Scope B ToDo from Scope A');
+
+  let cTodoDeleteRejected = false;
+  try {
+    await dbClient.deleteTodo(todoInB.id);
+  } catch (err) {
+    cTodoDeleteRejected = true;
+  }
+  assert(cTodoDeleteRejected, 'Server strictly rejected deleting Scope B ToDo from Scope A');
+
+  let cSeeReviewRejected = false;
+  try {
+    await dbClient.createSeeReview({
+      plan_id: planInB.id,
+      review_date: '2026-08-28',
+      planned_count: 1,
+      completed_count: 1,
+      delayed_count: 0,
+      blocked_count: 0,
+      time_delta_minutes: 0,
+      adjustment_insight: 'Cross scope review attempt'
+    });
+  } catch (err) {
+    cSeeReviewRejected = true;
+  }
+  assert(cSeeReviewRejected, 'Server strictly rejected creating See Review for Scope B plan from Scope A');
+
+  // Cascade Deletion Integrity Test (Zero Orphaned Records)
+  dbClient.setSessionScope('scope_a');
+  const cascadePlan = await dbClient.createPlan({
+    title: 'Cascade Test Plan',
+    period_start: '2026-08-28',
+    period_end: '2026-08-28',
+    priority: 'medium',
+    estimated_hours: 60,
+    success_criteria: 'Testing cascade cleanup'
+  });
+  await dbClient.updatePlan(cascadePlan.id, { title: 'Cascade Test Plan v2', revision_reason: 'Testing history trigger' });
+  const cascadeTodo = await dbClient.createTodo({
+    plan_id: cascadePlan.id,
+    title: 'Cascade Child ToDo',
+    due_date: '2026-08-28',
+    priority: 'low',
+    estimated_minutes: 30,
+    tags: ['cascade']
+  });
+  await dbClient.addDoLog(cascadeTodo.id, {
+    execution_start: '2026-08-28T09:00:00Z',
+    execution_end: '2026-08-28T09:30:00Z',
+    actual_minutes: 30,
+    blocked_reason: ''
+  });
+  await dbClient.createSeeReview({
+    plan_id: cascadePlan.id,
+    review_date: '2026-08-28',
+    planned_count: 1,
+    completed_count: 1,
+    delayed_count: 0,
+    blocked_count: 0,
+    time_delta_minutes: 0,
+    adjustment_insight: 'Cascade review test'
+  });
+  // Now delete the plan
+  await dbClient.deletePlan(cascadePlan.id);
+  const scopeADataAfterCascade = await dbClient.fetchAll('scope_a');
+  const orphanPlans = scopeADataAfterCascade.plans.filter(p => p.id === cascadePlan.id);
+  const orphanHistories = scopeADataAfterCascade.plan_histories.filter(h => h.plan_id === cascadePlan.id);
+  const orphanTodos = scopeADataAfterCascade.todos.filter(t => t.plan_id === cascadePlan.id);
+  const orphanLogs = scopeADataAfterCascade.do_logs.filter(l => l.todo_id === cascadeTodo.id);
+  const orphanReviews = scopeADataAfterCascade.see_reviews.filter(r => r.plan_id === cascadePlan.id);
+  assert(
+    orphanPlans.length === 0 &&
+    orphanHistories.length === 0 &&
+    orphanTodos.length === 0 &&
+    orphanLogs.length === 0 &&
+    orphanReviews.length === 0,
+    'Cascade deletion removed all linked histories, todos, do_logs, and reviews (0 orphans)'
+  );
+
   // --- 4b. PLAN VS DO ESTIMATED DURATION CONSTRAINT TESTS ---
-  console.log('\n--- [4b] Plan vs Do Estimated Duration Constraint Tests ---');
+  console.log('\n--- [4b] Plan vs Do Estimated Duration & Date Boundary Tests ---');
   
   // 1. Create a 120 min plan
   const budgetPlan = await dbClient.createPlan({
@@ -266,6 +433,22 @@ async function runAllTests() {
     estimated_hours: 120,
     success_criteria: 'Test time constraints'
   });
+
+  // ToDo Due Date Exceeding Plan Period End Rejection Test
+  let dueDateExceedBlocked = false;
+  try {
+    await dbClient.createTodo({
+      plan_id: budgetPlan.id,
+      title: 'Due Date Exceeding Task',
+      due_date: '2026-08-30', // Later than Plan end: 2026-08-28
+      priority: 'high',
+      estimated_minutes: 30,
+      tags: ['test']
+    });
+  } catch (err) {
+    dueDateExceedBlocked = true;
+  }
+  assert(dueDateExceedBlocked, 'Creating ToDo with due date later than Plan end date was strictly blocked');
 
   // 2. Add ToDo 1 (60 min) - should succeed (60 <= 120)
   const todoValid1 = await dbClient.createTodo({
@@ -335,7 +518,7 @@ async function runAllTests() {
   });
   assert(Number(expandedPlan.estimated_hours) === 180, 'Expanding Plan budget (180m >= 110m) succeeded');
 
-  // 8. Creating Plan with 0 minutes must be strictly blocked
+  // 8. Creating Plan with 0 or negative minutes must be strictly blocked
   let zeroPlanBlocked = false;
   try {
     await dbClient.createPlan({
@@ -351,7 +534,22 @@ async function runAllTests() {
   }
   assert(zeroPlanBlocked, 'Creating Plan with 0 minutes was strictly blocked');
 
-  // 9. Creating ToDo with 0 minutes must be strictly blocked
+  let negPlanBlocked = false;
+  try {
+    await dbClient.createPlan({
+      title: 'Negative Plan',
+      period_start: '2026-08-28',
+      period_end: '2026-08-28',
+      priority: 'low',
+      estimated_hours: -60,
+      success_criteria: 'Negative time test'
+    });
+  } catch (err) {
+    negPlanBlocked = true;
+  }
+  assert(negPlanBlocked, 'Creating Plan with negative minutes was strictly blocked');
+
+  // 9. Creating ToDo with 0 or negative minutes must be strictly blocked
   let zeroTodoBlocked = false;
   try {
     await dbClient.createTodo({
@@ -367,7 +565,22 @@ async function runAllTests() {
   }
   assert(zeroTodoBlocked, 'Creating ToDo with 0 minutes was strictly blocked');
 
-  // 10. Completing ToDo with 0 actual minutes must be strictly blocked
+  let negTodoBlocked = false;
+  try {
+    await dbClient.createTodo({
+      plan_id: expandedPlan.id,
+      title: 'Negative Task',
+      due_date: '2026-08-28',
+      priority: 'low',
+      estimated_minutes: -30,
+      tags: ['test']
+    });
+  } catch (err) {
+    negTodoBlocked = true;
+  }
+  assert(negTodoBlocked, 'Creating ToDo with negative minutes was strictly blocked');
+
+  // 10. Completing ToDo with 0 or negative actual minutes must be strictly blocked
   let zeroLogBlocked = false;
   try {
     await dbClient.completeTodoIdempotent(todoValid1.id, {
@@ -380,6 +593,20 @@ async function runAllTests() {
     zeroLogBlocked = true;
   }
   assert(zeroLogBlocked, 'Logging completion with 0 actual minutes was strictly blocked');
+
+  // 11. Adding Do Log (Save only) with 0 or negative actual minutes must be strictly blocked
+  let zeroAddLogBlocked = false;
+  try {
+    await dbClient.addDoLog(todoValid1.id, {
+      execution_start: '2026-08-28T10:00:00Z',
+      execution_end: '2026-08-28T10:00:00Z',
+      actual_minutes: 0,
+      blocked_reason: ''
+    });
+  } catch (err) {
+    zeroAddLogBlocked = true;
+  }
+  assert(zeroAddLogBlocked, 'Adding Do Log with 0 actual minutes was strictly blocked');
 
   // --- 5. POSTGRESQL PGCRYPTO & AT-REST ENCRYPTION TESTS ---
   console.log('\n--- [5] PostgreSQL pgcrypto & At-Rest Encryption Tests (T06-C58 Compliant) ---');

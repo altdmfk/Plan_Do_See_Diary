@@ -28,6 +28,8 @@ const timerState = {
   isRunning: false
 };
 
+const activeCheckboxToggles = new Set();
+
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
@@ -320,6 +322,9 @@ function bindBoardActions() {
     const checkbox = e.target.closest('.custom-checkbox');
     if (checkbox) {
       const todoId = checkbox.dataset.todoId;
+      if (activeCheckboxToggles.has(todoId)) return;
+      activeCheckboxToggles.add(todoId);
+
       const state = appState.getState();
       const todo = state.todos.find(t => t.id === todoId);
       if (todo) {
@@ -336,7 +341,11 @@ function bindBoardActions() {
           showToast(nextCompleted ? i18n.t('todoCompleted') : i18n.t('todoInProgress'), 'success');
         } catch (err) {
           showToast(err.message, 'error');
+        } finally {
+          setTimeout(() => activeCheckboxToggles.delete(todoId), 400);
         }
+      } else {
+        activeCheckboxToggles.delete(todoId);
       }
       return;
     }
@@ -478,10 +487,30 @@ function bindInputValidations() {
 // --- MODALS & FORMS ---
 function bindModalForms() {
   // Plan Modal
+  let isSubmittingPlan = false;
   document.getElementById('planModalCloseBtn').addEventListener('click', () => modalManager.attemptClose('planModal'));
   document.getElementById('planModalCancelBtn').addEventListener('click', () => modalManager.attemptClose('planModal'));
   document.getElementById('planForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (isSubmittingPlan) return;
+    isSubmittingPlan = true;
+
+    const submitBtn = document.getElementById('planFormSubmitBtn');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.style.pointerEvents = 'none';
+    }
+
+    const unlock = () => {
+      setTimeout(() => {
+        isSubmittingPlan = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.style.pointerEvents = '';
+        }
+      }, 600);
+    };
+
     const id = document.getElementById('planFormId').value;
     const isEdit = Boolean(id);
 
@@ -490,6 +519,7 @@ function bindModalForms() {
 
     if (endVal < startVal) {
       showToast(i18n.t('dateRangeError'), 'error');
+      unlock();
       return;
     }
 
@@ -497,6 +527,7 @@ function bindModalForms() {
     if (estimatedMinutes <= 0) {
       showToast(i18n.t('minDurationRequired'), 'error');
       document.getElementById('planHoursInput').focus();
+      unlock();
       return;
     }
 
@@ -508,6 +539,7 @@ function bindModalForms() {
           .replace('{hours}', estimatedMinutes)
           .replace('{todoMinutes}', totalTodoMinutes);
         showToast(msg, 'error', 6000);
+        unlock();
         return;
       }
     }
@@ -539,6 +571,7 @@ function bindModalForms() {
       if (!isContentChanged) {
         showToast(i18n.t('noChangesMade'), 'warning');
         modalManager.forceClose('planModal');
+        unlock();
         return;
       }
 
@@ -562,6 +595,8 @@ function bindModalForms() {
       }
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      unlock();
     }
   });
 
@@ -603,8 +638,28 @@ function bindModalForms() {
     }
   });
 
+  let isSubmittingTodo = false;
   document.getElementById('todoForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (isSubmittingTodo) return;
+    isSubmittingTodo = true;
+
+    const submitBtn = document.getElementById('todoFormSubmitBtn');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.style.pointerEvents = 'none';
+    }
+
+    const unlock = () => {
+      setTimeout(() => {
+        isSubmittingTodo = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.style.pointerEvents = '';
+        }
+      }, 600);
+    };
+
     const id = document.getElementById('todoFormId').value;
     const isEdit = Boolean(id);
 
@@ -616,6 +671,7 @@ function bindModalForms() {
     if (selectedPlan && selectedPlan.period_end && dueDate > selectedPlan.period_end) {
       const msg = i18n.t('todoDueDateExceedsPlan').replace('{date}', selectedPlan.period_end);
       showToast(msg, 'error', 5000);
+      unlock();
       return;
     }
 
@@ -623,6 +679,7 @@ function bindModalForms() {
     if (estimatedMinutes <= 0) {
       showToast(i18n.t('minDurationRequired'), 'error');
       document.getElementById('todoEstimatedMinutesInput').focus();
+      unlock();
       return;
     }
 
@@ -638,6 +695,7 @@ function bindModalForms() {
             .replace('{totalMinutes}', newTotalMinutes)
             .replace('{planHours}', planBudgetMinutes);
           showToast(msg, 'error', 5500);
+          unlock();
           return;
         }
       }
@@ -668,6 +726,8 @@ function bindModalForms() {
       await appState.refreshData();
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      unlock();
     }
   });
 
@@ -701,31 +761,49 @@ function bindModalForms() {
   document.getElementById('execTimerResetBtn').addEventListener('click', resetTimer);
 
   // Complete & Log (Idempotent submission with token locking)
+  let isSubmittingExec = false;
   document.getElementById('execForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const todoId = document.getElementById('execTodoId').value;
-    const submitBtn = document.getElementById('execCompleteAndLogBtn');
+    if (isSubmittingExec) return;
+    isSubmittingExec = true;
 
+    const submitBtn = document.getElementById('execCompleteAndLogBtn');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.style.pointerEvents = 'none';
+    }
+
+    const unlock = () => {
+      setTimeout(() => {
+        isSubmittingExec = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.style.pointerEvents = '';
+        }
+      }, 600);
+    };
+
+    const todoId = document.getElementById('execTodoId').value;
     const startVal = document.getElementById('execStartInput').value;
     const endVal = document.getElementById('execEndInput').value;
 
     if (startVal && endVal && new Date(endVal).getTime() < new Date(startVal).getTime()) {
       showToast(i18n.t('timeRangeError'), 'error');
+      unlock();
       return;
     }
     
-    submitBtn.disabled = true;
-    const completionToken = crypto.randomUUID();
-
-    const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
-    const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
     const actualMin = parseInt(document.getElementById('execMinutesInput').value, 10) || 0;
     if (actualMin <= 0) {
       showToast(i18n.t('minDurationRequired'), 'error');
       document.getElementById('execMinutesInput').focus();
-      submitBtn.disabled = false;
+      unlock();
       return;
     }
+
+    const completionToken = crypto.randomUUID();
+    const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
+    const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
     const blockedReason = document.getElementById('execBlockerInput').value.trim();
 
     try {
@@ -743,24 +821,52 @@ function bindModalForms() {
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
-      submitBtn.disabled = false;
+      unlock();
     }
   });
 
   // Save Log Only (without completing To Do)
+  let isSubmittingLogOnly = false;
   document.getElementById('execSaveLogOnlyBtn').addEventListener('click', async () => {
+    if (isSubmittingLogOnly) return;
+    isSubmittingLogOnly = true;
+
+    const saveBtn = document.getElementById('execSaveLogOnlyBtn');
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.style.pointerEvents = 'none';
+    }
+
+    const unlock = () => {
+      setTimeout(() => {
+        isSubmittingLogOnly = false;
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.style.pointerEvents = '';
+        }
+      }, 600);
+    };
+
     const todoId = document.getElementById('execTodoId').value;
     const startVal = document.getElementById('execStartInput').value;
     const endVal = document.getElementById('execEndInput').value;
 
     if (startVal && endVal && new Date(endVal).getTime() < new Date(startVal).getTime()) {
       showToast(i18n.t('timeRangeError'), 'error');
+      unlock();
+      return;
+    }
+
+    const actualMin = parseInt(document.getElementById('execMinutesInput').value, 10) || 0;
+    if (actualMin <= 0) {
+      showToast(i18n.t('minDurationRequired'), 'error');
+      document.getElementById('execMinutesInput').focus();
+      unlock();
       return;
     }
 
     const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
     const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
-    const actualMin = parseInt(document.getElementById('execMinutesInput').value, 10) || 0;
     const blockedReason = document.getElementById('execBlockerInput').value.trim();
 
     try {
@@ -776,6 +882,8 @@ function bindModalForms() {
       showToast(i18n.getLang() === 'ko' ? '실행 기록이 저장되었습니다.' : 'Execution log saved.', 'success');
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      unlock();
     }
   });
 
@@ -784,13 +892,34 @@ function bindModalForms() {
   document.getElementById('historyModalDismissBtn').addEventListener('click', () => modalManager.forceClose('historyModal'));
 
   // See Review Modal
+  let isSubmittingSee = false;
   document.getElementById('seeModalCloseBtn').addEventListener('click', () => modalManager.attemptClose('seeModal'));
   document.getElementById('seeModalCancelBtn').addEventListener('click', () => modalManager.attemptClose('seeModal'));
   document.getElementById('seeForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (isSubmittingSee) return;
+    isSubmittingSee = true;
+
+    const submitBtn = document.getElementById('seeFormSubmitBtn');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.style.pointerEvents = 'none';
+    }
+
+    const unlock = () => {
+      setTimeout(() => {
+        isSubmittingSee = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.style.pointerEvents = '';
+        }
+      }, 600);
+    };
+
     const planId = appState.getState().selectedPlanId;
     if (!planId) {
       showToast(i18n.t('selectPlanFirst'), 'warning');
+      unlock();
       return;
     }
 
@@ -815,13 +944,35 @@ function bindModalForms() {
       showToast(i18n.getLang() === 'ko' ? '회고가 저장되었습니다.' : 'Reflection saved successfully.', 'success');
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      unlock();
     }
   });
 
   // Reset Confirmation Modal
+  let isSubmittingReset = false;
   document.getElementById('resetModalCloseBtn').addEventListener('click', () => modalManager.forceClose('resetModal'));
   document.getElementById('resetModalCancelBtn').addEventListener('click', () => modalManager.forceClose('resetModal'));
   document.getElementById('resetModalConfirmBtn').addEventListener('click', async () => {
+    if (isSubmittingReset) return;
+    isSubmittingReset = true;
+
+    const confirmBtn = document.getElementById('resetModalConfirmBtn');
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.style.pointerEvents = 'none';
+    }
+
+    const unlock = () => {
+      setTimeout(() => {
+        isSubmittingReset = false;
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.style.pointerEvents = '';
+        }
+      }, 600);
+    };
+
     try {
       await API.purgeCurrentScope();
       modalManager.forceClose('resetModal');
@@ -829,16 +980,39 @@ function bindModalForms() {
       showToast(i18n.t('resetSuccess'), 'success');
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      unlock();
     }
   });
 
   // Import JSON Modal
+  let isSubmittingImport = false;
   document.getElementById('importModalCloseBtn').addEventListener('click', () => modalManager.forceClose('importModal'));
   document.getElementById('importModalCancelBtn').addEventListener('click', () => modalManager.forceClose('importModal'));
   document.getElementById('importModalSubmitBtn').addEventListener('click', async () => {
+    if (isSubmittingImport) return;
+    isSubmittingImport = true;
+
+    const submitBtn = document.getElementById('importModalSubmitBtn');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.style.pointerEvents = 'none';
+    }
+
+    const unlock = () => {
+      setTimeout(() => {
+        isSubmittingImport = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.style.pointerEvents = '';
+        }
+      }, 600);
+    };
+
     const fileInput = document.getElementById('importFileInput');
     if (!fileInput.files || fileInput.files.length === 0) {
       showToast(i18n.getLang() === 'ko' ? '가져올 JSON 파일을 선택하세요.' : 'Please select a JSON file to import.', 'warning');
+      unlock();
       return;
     }
 
@@ -854,11 +1028,14 @@ function bindModalForms() {
         showToast(i18n.t('backupImported'), 'success');
       } catch (err) {
         showToast(`Import Error: ${err.message}`, 'error', 6000);
+      } finally {
+        unlock();
       }
     };
 
     reader.onerror = () => {
       showToast('Failed to read file from disk.', 'error');
+      unlock();
     };
 
     reader.readAsText(file);
