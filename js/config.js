@@ -43,9 +43,9 @@ export const CONFIG = {
   // Synthetic Data Seeding Toggle (Set to false for completely blank diary)
   ENABLE_SYNTHETIC_SEED: true,
   
-  // Supabase Configuration (Explicit Environment / Global Variables)
+  // Supabase Configuration (Explicit Environment / Global Variables / LocalStorage)
   SUPABASE: {
-    URL: (typeof window !== 'undefined' && window.__PDS_SUPABASE_URL) || '',
-    ANON_KEY: (typeof window !== 'undefined' && window.__PDS_SUPABASE_KEY) || ''
+    URL: (typeof window !== 'undefined' && (window.__PDS_SUPABASE_URL || (typeof localStorage !== 'undefined' && localStorage.getItem('__PDS_SUPABASE_URL')))) || '',
+    ANON_KEY: (typeof window !== 'undefined' && (window.__PDS_SUPABASE_KEY || (typeof localStorage !== 'undefined' && localStorage.getItem('__PDS_SUPABASE_KEY')))) || ''
   }
 };
