@@ -178,52 +178,46 @@ CREATE TRIGGER trg_capture_plan_history
     WHEN (OLD.* IS DISTINCT FROM NEW.*)
     EXECUTE FUNCTION fn_capture_plan_history();
 
--- 9. Row Level Security (RLS) Configuration
+-- 9. Row Level Security (RLS) Configuration & Public API Grants
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+
 ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE plan_histories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE do_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE see_reviews ENABLE ROW LEVEL SECURITY;
 
-CREATE OR REPLACE FUNCTION current_request_scope()
-RETURNS persona_scope AS $$
-BEGIN
-    RETURN COALESCE(
-        current_setting('request.headers', true)::json->>'x-persona-scope',
-        current_setting('request.jwt.claims', true)::json->>'persona_scope',
-        current_setting('app.current_scope', true),
-        'scope_a'
-    )::persona_scope;
-EXCEPTION
-    WHEN OTHERS THEN
-        RETURN 'scope_a'::persona_scope;
-END;
-$$ LANGUAGE plpgsql STABLE;
-
+DROP POLICY IF EXISTS rls_plans_all ON plans;
 CREATE POLICY rls_plans_all ON plans
-    FOR ALL
-    USING (scope = current_request_scope())
-    WITH CHECK (scope = current_request_scope());
+    FOR ALL TO anon, authenticated
+    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
+DROP POLICY IF EXISTS rls_plan_histories_all ON plan_histories;
 CREATE POLICY rls_plan_histories_all ON plan_histories
-    FOR ALL
-    USING (scope = current_request_scope())
-    WITH CHECK (scope = current_request_scope());
+    FOR ALL TO anon, authenticated
+    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
+DROP POLICY IF EXISTS rls_todos_all ON todos;
 CREATE POLICY rls_todos_all ON todos
-    FOR ALL
-    USING (scope = current_request_scope())
-    WITH CHECK (scope = current_request_scope());
+    FOR ALL TO anon, authenticated
+    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
+DROP POLICY IF EXISTS rls_do_logs_all ON do_logs;
 CREATE POLICY rls_do_logs_all ON do_logs
-    FOR ALL
-    USING (scope = current_request_scope())
-    WITH CHECK (scope = current_request_scope());
+    FOR ALL TO anon, authenticated
+    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
+DROP POLICY IF EXISTS rls_see_reviews_all ON see_reviews;
 CREATE POLICY rls_see_reviews_all ON see_reviews
-    FOR ALL
-    USING (scope = current_request_scope())
-    WITH CHECK (scope = current_request_scope());
+    FOR ALL TO anon, authenticated
+    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
 -- 10. Idempotent Todo Completion Function
 CREATE OR REPLACE FUNCTION complete_todo_idempotent(
