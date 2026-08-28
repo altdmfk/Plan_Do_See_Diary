@@ -149,3 +149,16 @@ All calendar calculations are evaluated strictly against the active timezone:
   - `N`: Quick-open "New Plan" creation modal from board view.
   - `1` / `2` / `3`: Quick-switch between Plan, Do, and See columns on mobile.
 - **Mobile Touch Gestures:** Horizontal swipe gestures (`touchstart`/`touchend` delta detection) enable seamless transitions between Kanban columns on mobile screens.
+
+---
+
+## 8. Time Duration Integrity & Bidirectional Constraints
+
+- **Unified Minutes Unit (분 단위):**
+  - Both strategic Plans and tactical ToDos use positive integer minutes ($> 0$), eliminating conversion ambiguities.
+- **Bidirectional Invariant Enforcement:**
+  1. **Strict Minimum Duration:** 0 minutes or negative values are strictly blocked across Plans, ToDos, and Do execution logs with immediate focus and error notifications.
+  2. **To Do Due Date Boundary:** $\text{todo.due\_date} \le \text{plan.period\_end}$.
+  3. **Plan Budget Ceiling:** $\sum \text{child\_todos.estimated\_minutes} \le \text{plan.estimated\_hours}$.
+  4. **Plan Reduction Guard:** A plan's target duration cannot be reduced below the sum of its existing child ToDos' estimated minutes.
+

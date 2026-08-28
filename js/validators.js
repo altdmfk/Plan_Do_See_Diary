@@ -22,23 +22,25 @@ export function validateFileSize(fileSizeBytes) {
 }
 
 /**
- * Clean and sanitize single text string to prevent injection & unbounded memory usage
+ * Clean and sanitize text string
  */
-function sanitizeString(val, maxLen = MAX_STRING_LEN) {
+export function sanitizeText(val, maxLen = MAX_STRING_LEN) {
   if (val === null || val === undefined) return '';
   const str = String(val).trim();
   return str.length > maxLen ? str.slice(0, maxLen) : str;
 }
+export const sanitizeString = sanitizeText;
 
 /**
  * Clean and clamp numeric bounds
  */
-function clampNumber(val, min = 0, max = MAX_MINUTES) {
+export function clampNum(val, min = 0, max = MAX_MINUTES) {
   const num = Number(val);
   if (isNaN(num) || num < min) return min;
   if (num > max) return max;
   return num;
 }
+export const clampNumber = clampNum;
 
 /**
  * Defend against Prototype Pollution attacks on imported JSON objects

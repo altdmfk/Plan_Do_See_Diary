@@ -254,6 +254,133 @@ async function runAllTests() {
   const scopeAAfterDoubleImport = await dbClient.fetchAll('scope_a');
   assert(scopeAAfterDoubleImport.plans.length === 1, 'Repeated import produced 0 duplicate rows (idempotent upsert)');
 
+  // --- 4b. PLAN VS DO ESTIMATED DURATION CONSTRAINT TESTS ---
+  console.log('\n--- [4b] Plan vs Do Estimated Duration Constraint Tests ---');
+  
+  // 1. Create a 120 min plan
+  const budgetPlan = await dbClient.createPlan({
+    title: 'Budget Test Plan',
+    period_start: '2026-08-28',
+    period_end: '2026-08-28',
+    priority: 'high',
+    estimated_hours: 120,
+    success_criteria: 'Test time constraints'
+  });
+
+  // 2. Add ToDo 1 (60 min) - should succeed (60 <= 120)
+  const todoValid1 = await dbClient.createTodo({
+    plan_id: budgetPlan.id,
+    title: 'Valid Task 1',
+    due_date: '2026-08-28',
+    priority: 'medium',
+    estimated_minutes: 60,
+    tags: ['test']
+  });
+  assert(todoValid1 && todoValid1.id, 'Adding ToDo within plan time budget succeeded (60m <= 120m)');
+
+  // 3. Try adding ToDo 2 (70 min, total 130m > 120m) - must be rejected!
+  let exceededCreateBlocked = false;
+  try {
+    await dbClient.createTodo({
+      plan_id: budgetPlan.id,
+      title: 'Exceeding Task',
+      due_date: '2026-08-28',
+      priority: 'high',
+      estimated_minutes: 70,
+      tags: ['test']
+    });
+  } catch (err) {
+    exceededCreateBlocked = true;
+  }
+  assert(exceededCreateBlocked, 'Adding ToDo exceeding plan budget (130m > 120m) was strictly blocked');
+
+  // 4. Add ToDo 2 (50 min, total 110m <= 120m) - should succeed
+  const todoValid2 = await dbClient.createTodo({
+    plan_id: budgetPlan.id,
+    title: 'Valid Task 2',
+    due_date: '2026-08-28',
+    priority: 'low',
+    estimated_minutes: 50,
+    tags: ['test']
+  });
+  assert(todoValid2 && todoValid2.id, 'Adding second ToDo within remaining budget succeeded (110m <= 120m)');
+
+  // 5. Try updating ToDo 2 to 65 min (total 125m > 120m) - must be rejected!
+  let exceededUpdateBlocked = false;
+  try {
+    await dbClient.updateTodo(todoValid2.id, {
+      estimated_minutes: 65
+    });
+  } catch (err) {
+    exceededUpdateBlocked = true;
+  }
+  assert(exceededUpdateBlocked, 'Updating ToDo duration to exceed plan budget (125m > 120m) was strictly blocked');
+
+  // 6. Try updating Plan budget to 60 min (60 min < child total 110 min) - must be rejected!
+  let planUnderflowBlocked = false;
+  try {
+    await dbClient.updatePlan(budgetPlan.id, {
+      estimated_hours: 60,
+      revision_reason: 'Testing reduction'
+    });
+  } catch (err) {
+    planUnderflowBlocked = true;
+  }
+  assert(planUnderflowBlocked, 'Reducing Plan budget below child ToDos sum (60m < 110m) was strictly blocked');
+
+  // 7. Updating Plan budget to 180 min (180 min >= 110 min) - should succeed!
+  const expandedPlan = await dbClient.updatePlan(budgetPlan.id, {
+    estimated_hours: 180,
+    revision_reason: 'Expanding budget'
+  });
+  assert(Number(expandedPlan.estimated_hours) === 180, 'Expanding Plan budget (180m >= 110m) succeeded');
+
+  // 8. Creating Plan with 0 minutes must be strictly blocked
+  let zeroPlanBlocked = false;
+  try {
+    await dbClient.createPlan({
+      title: 'Zero Plan',
+      period_start: '2026-08-28',
+      period_end: '2026-08-28',
+      priority: 'low',
+      estimated_hours: 0,
+      success_criteria: 'Zero time test'
+    });
+  } catch (err) {
+    zeroPlanBlocked = true;
+  }
+  assert(zeroPlanBlocked, 'Creating Plan with 0 minutes was strictly blocked');
+
+  // 9. Creating ToDo with 0 minutes must be strictly blocked
+  let zeroTodoBlocked = false;
+  try {
+    await dbClient.createTodo({
+      plan_id: expandedPlan.id,
+      title: 'Zero Task',
+      due_date: '2026-08-28',
+      priority: 'low',
+      estimated_minutes: 0,
+      tags: ['test']
+    });
+  } catch (err) {
+    zeroTodoBlocked = true;
+  }
+  assert(zeroTodoBlocked, 'Creating ToDo with 0 minutes was strictly blocked');
+
+  // 10. Completing ToDo with 0 actual minutes must be strictly blocked
+  let zeroLogBlocked = false;
+  try {
+    await dbClient.completeTodoIdempotent(todoValid1.id, {
+      execution_start: '2026-08-28T10:00:00Z',
+      execution_end: '2026-08-28T10:00:00Z',
+      actual_minutes: 0,
+      blocked_reason: ''
+    }, crypto.randomUUID());
+  } catch (err) {
+    zeroLogBlocked = true;
+  }
+  assert(zeroLogBlocked, 'Logging completion with 0 actual minutes was strictly blocked');
+
   // --- 5. POSTGRESQL PGCRYPTO & AT-REST ENCRYPTION TESTS ---
   console.log('\n--- [5] PostgreSQL pgcrypto & At-Rest Encryption Tests (T06-C58 Compliant) ---');
 

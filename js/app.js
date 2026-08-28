@@ -246,6 +246,13 @@ function bindBoardActions() {
   document.getElementById('colAddPlanBtn').addEventListener('click', openCreatePlanModal);
 
   document.getElementById('planColBody').addEventListener('click', async (e) => {
+    // Empty state new plan button click
+    const emptyBtn = e.target.closest('#emptyStateNewPlanBtn');
+    if (emptyBtn) {
+      openCreatePlanModal();
+      return;
+    }
+
     const planCard = e.target.closest('.plan-card');
     if (!planCard) return;
 
@@ -281,6 +288,13 @@ function bindBoardActions() {
   document.getElementById('colAddTodoBtn').addEventListener('click', openCreateTodoModal);
 
   document.getElementById('doColBody').addEventListener('click', async (e) => {
+    // Empty state new todo button click
+    const emptyTodoBtn = e.target.closest('#emptyStateNewTodoBtn');
+    if (emptyTodoBtn) {
+      openCreateTodoModal();
+      return;
+    }
+
     // Clear all tags button
     if (e.target.classList.contains('clear-all-tags-btn')) {
       appState.clearTagFilters();
@@ -479,12 +493,31 @@ function bindModalForms() {
       return;
     }
 
+    const estimatedMinutes = parseInt(document.getElementById('planHoursInput').value, 10) || 0;
+    if (estimatedMinutes <= 0) {
+      showToast(i18n.t('minDurationRequired'), 'error');
+      document.getElementById('planHoursInput').focus();
+      return;
+    }
+
+    if (isEdit) {
+      const childTodos = appState.getState().todos.filter(t => String(t.plan_id) === String(id));
+      const totalTodoMinutes = childTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
+      if (totalTodoMinutes > 0 && estimatedMinutes < totalTodoMinutes) {
+        const msg = i18n.t('planHoursLessThanTodos')
+          .replace('{hours}', estimatedMinutes)
+          .replace('{todoMinutes}', totalTodoMinutes);
+        showToast(msg, 'error', 6000);
+        return;
+      }
+    }
+
     const payload = {
       title: document.getElementById('planTitleInput').value.trim(),
       period_start: startVal,
       period_end: endVal,
       priority: document.getElementById('planPriorityInput').value,
-      estimated_hours: parseInt(document.getElementById('planHoursInput').value, 10) || 0,
+      estimated_hours: estimatedMinutes,
       success_criteria: document.getElementById('planCriteriaInput').value.trim(),
       status: 'active'
     };
@@ -535,20 +568,90 @@ function bindModalForms() {
   // To Do Modal
   document.getElementById('todoModalCloseBtn').addEventListener('click', () => modalManager.attemptClose('todoModal'));
   document.getElementById('todoModalCancelBtn').addEventListener('click', () => modalManager.attemptClose('todoModal'));
+
+  document.getElementById('todoPlanSelect').addEventListener('change', (e) => {
+    const selectedPlan = appState.getState().plans.find(p => p.id === e.target.value);
+    if (selectedPlan && selectedPlan.period_end) {
+      document.getElementById('todoDueDateInput').max = selectedPlan.period_end;
+      if (document.getElementById('todoDueDateInput').value > selectedPlan.period_end) {
+        document.getElementById('todoDueDateInput').value = selectedPlan.period_end;
+        const msg = i18n.t('todoDueDateExceedsPlan').replace('{date}', selectedPlan.period_end);
+        showToast(msg, 'warning', 4500);
+      }
+    }
+  });
+
+  document.getElementById('todoEstimatedMinutesInput').addEventListener('input', (e) => {
+    const planId = document.getElementById('todoPlanSelect').value;
+    const selectedPlan = appState.getState().plans.find(p => String(p.id) === String(planId));
+    const id = document.getElementById('todoFormId').value;
+    const isEdit = Boolean(id);
+    const estimatedMinutes = parseInt(e.target.value, 10) || 0;
+
+    if (selectedPlan) {
+      const planBudgetMinutes = parseInt(selectedPlan.estimated_hours, 10) || 0;
+      if (planBudgetMinutes > 0) {
+        const otherTodos = appState.getState().todos.filter(t => String(t.plan_id) === String(planId) && (!isEdit || String(t.id) !== String(id)));
+        const currentTotalMinutes = otherTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
+        const newTotalMinutes = currentTotalMinutes + estimatedMinutes;
+        if (newTotalMinutes > planBudgetMinutes) {
+          e.target.classList.add('input-invalid');
+        } else {
+          e.target.classList.remove('input-invalid');
+        }
+      }
+    }
+  });
+
   document.getElementById('todoForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const id = document.getElementById('todoFormId').value;
     const isEdit = Boolean(id);
 
+    const planId = document.getElementById('todoPlanSelect').value;
+    const dueDate = document.getElementById('todoDueDateInput').value;
+    const selectedPlan = appState.getState().plans.find(p => String(p.id) === String(planId));
+
+    // Guard 1: Prevent To Do due date from exceeding linked plan's end date
+    if (selectedPlan && selectedPlan.period_end && dueDate > selectedPlan.period_end) {
+      const msg = i18n.t('todoDueDateExceedsPlan').replace('{date}', selectedPlan.period_end);
+      showToast(msg, 'error', 5000);
+      return;
+    }
+
+    const estimatedMinutes = parseInt(document.getElementById('todoEstimatedMinutesInput').value, 10) || 0;
+    if (estimatedMinutes <= 0) {
+      showToast(i18n.t('minDurationRequired'), 'error');
+      document.getElementById('todoEstimatedMinutesInput').focus();
+      return;
+    }
+
+    // Guard 2: Prevent child To Dos sum from exceeding Plan total estimated budget
+    if (selectedPlan) {
+      const planBudgetMinutes = parseInt(selectedPlan.estimated_hours, 10) || 0;
+      if (planBudgetMinutes > 0 && estimatedMinutes > 0) {
+        const otherTodos = appState.getState().todos.filter(t => String(t.plan_id) === String(planId) && (!isEdit || String(t.id) !== String(id)));
+        const currentTotalMinutes = otherTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
+        const newTotalMinutes = currentTotalMinutes + estimatedMinutes;
+        if (newTotalMinutes > planBudgetMinutes) {
+          const msg = i18n.t('todosExceedPlanHours')
+            .replace('{totalMinutes}', newTotalMinutes)
+            .replace('{planHours}', planBudgetMinutes);
+          showToast(msg, 'error', 5500);
+          return;
+        }
+      }
+    }
+
     const tagsRaw = document.getElementById('todoTagsInput').value;
     const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
     const payload = {
-      plan_id: document.getElementById('todoPlanSelect').value,
+      plan_id: planId,
       title: document.getElementById('todoTitleInput').value.trim(),
-      due_date: document.getElementById('todoDueDateInput').value,
+      due_date: dueDate,
       priority: document.getElementById('todoPriorityInput').value,
-      estimated_minutes: parseInt(document.getElementById('todoEstimatedMinutesInput').value, 10) || 0,
+      estimated_minutes: estimatedMinutes,
       tags: tags,
       description: document.getElementById('todoDescInput').value.trim()
     };
@@ -578,6 +681,21 @@ function bindModalForms() {
     modalManager.attemptClose('execModal');
   });
 
+  const recalcExecDuration = () => {
+    const startVal = document.getElementById('execStartInput').value;
+    const endVal = document.getElementById('execEndInput').value;
+    if (startVal && endVal) {
+      const diffMs = new Date(endVal).getTime() - new Date(startVal).getTime();
+      if (diffMs >= 0) {
+        const mins = Math.round(diffMs / 60000);
+        document.getElementById('execMinutesInput').value = mins;
+      }
+    }
+  };
+
+  document.getElementById('execStartInput').addEventListener('change', recalcExecDuration);
+  document.getElementById('execEndInput').addEventListener('change', recalcExecDuration);
+
   document.getElementById('execTimerStartBtn').addEventListener('click', startTimer);
   document.getElementById('execTimerStopBtn').addEventListener('click', stopTimer);
   document.getElementById('execTimerResetBtn').addEventListener('click', resetTimer);
@@ -602,6 +720,12 @@ function bindModalForms() {
     const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
     const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
     const actualMin = parseInt(document.getElementById('execMinutesInput').value, 10) || 0;
+    if (actualMin <= 0) {
+      showToast(i18n.t('minDurationRequired'), 'error');
+      document.getElementById('execMinutesInput').focus();
+      submitBtn.disabled = false;
+      return;
+    }
     const blockedReason = document.getElementById('execBlockerInput').value.trim();
 
     try {
@@ -794,12 +918,23 @@ function openCreateTodoModal() {
     <option value="${p.id}" ${p.id === state.selectedPlanId ? 'selected' : ''}>${escapeHtml(p.title)}</option>
   `).join('');
 
+  const targetPlan = state.plans.find(p => p.id === state.selectedPlanId) || state.plans[0];
+  const dueDateInput = document.getElementById('todoDueDateInput');
+  const today = getKSTToday();
+
+  if (targetPlan && targetPlan.period_end) {
+    dueDateInput.max = targetPlan.period_end;
+    dueDateInput.value = today > targetPlan.period_end ? targetPlan.period_end : today;
+  } else {
+    dueDateInput.removeAttribute('max');
+    dueDateInput.value = today;
+  }
+
   document.getElementById('todoModalTitle').textContent = i18n.t('addTodoTitle');
   document.getElementById('todoFormId').value = '';
   document.getElementById('todoTitleInput').value = '';
-  document.getElementById('todoDueDateInput').value = getKSTToday();
   setPriorityPill('todoPriorityPills', 'todoPriorityInput', 'medium');
-  document.getElementById('todoEstimatedMinutesInput').value = '30';
+  document.getElementById('todoEstimatedMinutesInput').value = '';
   document.getElementById('todoTagsInput').value = '';
   document.getElementById('todoDescInput').value = '';
   modalManager.open('todoModal');
@@ -815,10 +950,18 @@ function openEditTodoModal(todoId) {
     <option value="${p.id}" ${p.id === todo.plan_id ? 'selected' : ''}>${escapeHtml(p.title)}</option>
   `).join('');
 
+  const targetPlan = state.plans.find(p => p.id === todo.plan_id);
+  const dueDateInput = document.getElementById('todoDueDateInput');
+  if (targetPlan && targetPlan.period_end) {
+    dueDateInput.max = targetPlan.period_end;
+  } else {
+    dueDateInput.removeAttribute('max');
+  }
+
   document.getElementById('todoModalTitle').textContent = i18n.t('editTodoTitle');
   document.getElementById('todoFormId').value = todo.id;
   document.getElementById('todoTitleInput').value = todo.title;
-  document.getElementById('todoDueDateInput').value = todo.due_date;
+  dueDateInput.value = todo.due_date;
   setPriorityPill('todoPriorityPills', 'todoPriorityInput', todo.priority || 'medium');
   document.getElementById('todoEstimatedMinutesInput').value = todo.estimated_minutes;
   document.getElementById('todoTagsInput').value = (todo.tags || []).join(', ');
@@ -831,7 +974,7 @@ function openExecLoggerModal(todoId) {
   if (!todo) return;
 
   document.getElementById('execTodoId').value = todo.id;
-  document.getElementById('execTodoSummary').textContent = `${todo.title} (${i18n.t('estimatedLabel')} ${todo.estimated_minutes}${i18n.t('minutesUnit')})`;
+  document.getElementById('execTodoSummary').textContent = `${todo.title} (${i18n.t('estimatedLabel')} ${todo.estimated_minutes || 0}${i18n.t('minutesUnit')})`;
   
   const now = new Date();
   const toLocalInput = (d) => {
@@ -839,9 +982,12 @@ function openExecLoggerModal(todoId) {
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
-  document.getElementById('execStartInput').value = toLocalInput(now);
+  const estMinutes = Number(todo.estimated_minutes) || 30;
+  const startTime = new Date(now.getTime() - (estMinutes * 60000));
+
+  document.getElementById('execStartInput').value = toLocalInput(startTime);
   document.getElementById('execEndInput').value = toLocalInput(now);
-  document.getElementById('execMinutesInput').value = todo.estimated_minutes || 30;
+  document.getElementById('execMinutesInput').value = estMinutes;
   document.getElementById('execBlockerInput').value = '';
 
   resetTimer();

@@ -194,8 +194,8 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="planHoursInput" id="modalPlanHoursLabel">예상 소요 시간</label>
-            <input type="text" inputmode="numeric" id="planHoursInput" class="input-field" placeholder="예: 600">
+            <label class="form-label" for="planHoursInput" id="modalPlanHoursLabel">목표 예상 시간 (분 단위) *</label>
+            <input type="number" min="1" id="planHoursInput" class="input-field" placeholder="예: 120 (최소 1분)" required>
           </div>
 
           <div class="form-group">
@@ -203,10 +203,10 @@
             <textarea id="planCriteriaInput" class="auto-textarea" placeholder="예: 테스트 커버리지 95% 달성 및 무중단 배포 완료"></textarea>
           </div>
 
-          <!-- Enlarged Spacious Textarea for Revision Reason -->
+          <!-- Horizontally Wide Input for Revision Reason -->
           <div class="form-group" id="planRevisionReasonGroup" style="display: none;">
             <label class="form-label" for="planRevisionReasonInput" id="modalPlanRevisionReasonLabel">수정 사유</label>
-            <textarea id="planRevisionReasonInput" class="auto-textarea" rows="3" style="min-height: 80px;" placeholder="계획을 변경하는 이유를 입력하세요"></textarea>
+            <input type="text" id="planRevisionReasonInput" class="input-field" style="width: 100%; padding: 0.55rem 0.75rem;" placeholder="계획을 변경하는 이유를 입력하세요">
           </div>
         </div>
         <div class="modal-footer">
@@ -258,8 +258,8 @@
 
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label" for="todoEstimatedMinutesInput" id="modalTodoMinutesLabel">예상 소요 시간</label>
-              <input type="text" inputmode="numeric" id="todoEstimatedMinutesInput" class="input-field" placeholder="예: 60">
+              <label class="form-label" for="todoEstimatedMinutesInput" id="modalTodoMinutesLabel">예상 소요 시간 (분 단위) *</label>
+              <input type="number" min="1" id="todoEstimatedMinutesInput" class="input-field" placeholder="예: 45 (최소 1분)" required>
             </div>
             <div class="form-group">
               <label class="form-label" for="todoTagsInput" id="modalTodoTagsLabel">태그 (쉼표로 구분)</label>
@@ -318,7 +318,7 @@
 
           <div class="form-group">
             <label class="form-label" for="execMinutesInput" id="modalExecMinutesLabel">실제 소요 시간 (분) *</label>
-            <input type="text" inputmode="numeric" id="execMinutesInput" class="input-field" placeholder="예: 45" required>
+            <input type="number" min="1" inputmode="numeric" id="execMinutesInput" class="input-field" placeholder="예: 45 (최소 1분)" required>
           </div>
 
           <div class="form-group">

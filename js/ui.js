@@ -275,7 +275,7 @@ export function renderPlanColumn(plans, selectedPlanId) {
   for (const plan of plans) {
     const isSelected = plan.id === selectedPlanId;
     const selectedClass = isSelected ? 'selected-card' : '';
-    const planMinutes = plan.estimated_hours || 0;
+    const planMinutes = Number(plan.estimated_hours) || 0;
 
     html += `
       <div class="card plan-card ${selectedClass}" data-plan-id="${plan.id}">
@@ -285,7 +285,7 @@ export function renderPlanColumn(plans, selectedPlanId) {
         </div>
         <div class="card-meta">
           <span>${escapeHtml(plan.period_start)} ~ ${escapeHtml(plan.period_end)} (${i18n.t('tzLabel')})</span>
-          <span>${escapeHtml(planMinutes)}${i18n.t('minutesUnit')}</span>
+          <span>${planMinutes}${i18n.t('minutesUnit')}</span>
           ${isSelected ? `<span class="badge-status active">${i18n.t('selectedBadge')}</span>` : ''}
         </div>
         ${plan.success_criteria ? `<div class="card-body-text" style="font-size: 0.78rem; opacity: 0.85;">${i18n.t('targetLabel')} ${escapeHtml(plan.success_criteria)}</div>` : ''}
