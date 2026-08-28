@@ -59,6 +59,10 @@ export const API = {
     return await dbClient.purgeActiveScope();
   },
 
+  async populateSyntheticSeed() {
+    return await dbClient.populateSyntheticSeed();
+  },
+
   async exportBackup() {
     const data = await dbClient.fetchAll();
     return {

@@ -136,9 +136,10 @@ export class ModalManager {
     this.activeModal = modal;
     modal.classList.add('active');
     
-    // Save initial snapshot after rendering values
+    // Save initial snapshot after rendering values and trigger textarea auto-fit
     setTimeout(() => {
       this.initialSnapshot = this._captureSnapshot(modal);
+      triggerTextareaResize(modal);
       const focusable = modal.querySelectorAll('input:not([type="hidden"]), select, textarea, button:not([disabled])');
       if (focusable.length > 0) {
         focusable[0].focus();
@@ -225,18 +226,34 @@ export class ModalManager {
 export const modalManager = new ModalManager();
 
 /**
- * Setup Auto-expanding Textareas
+ * Setup Auto-expanding & Auto-shrinking Textareas
  */
 export function setupAutoTextarea(textarea) {
   if (!textarea) return;
   const resize = () => {
-    textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
+    textarea.style.height = '0px';
+    const targetHeight = Math.min(Math.max(textarea.scrollHeight, 68), 240);
+    textarea.style.height = `${targetHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 240 ? 'auto' : 'hidden';
   };
-  textarea.addEventListener('input', () => {
-    resize();
-  });
+  textarea.addEventListener('input', resize);
+  textarea.addEventListener('change', resize);
+  textarea._autoResize = resize;
   setTimeout(resize, 0);
+}
+
+export function triggerTextareaResize(modalOrContainer) {
+  if (typeof document === 'undefined') return;
+  const container = typeof modalOrContainer === 'string' ? document.getElementById(modalOrContainer) : modalOrContainer;
+  if (!container) return;
+  const textareas = container.querySelectorAll ? container.querySelectorAll('.auto-textarea') : [container];
+  textareas.forEach(t => {
+    if (t._autoResize) {
+      t._autoResize();
+    } else {
+      t.style.height = '68px';
+    }
+  });
 }
 
 /**
@@ -265,7 +282,10 @@ export function renderPlanColumn(plans, selectedPlanId) {
         <div class="empty-state-icon">📋</div>
         <div class="empty-state-title">${i18n.t('emptyPlanTitle')}</div>
         <div class="empty-state-desc">${i18n.t('emptyPlanDesc')}</div>
-        <button class="btn btn-primary btn-sm" id="emptyStateNewPlanBtn" style="margin-top: 0.5rem;">${i18n.t('newPlanBtn')}</button>
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; justify-content: center;">
+          <button class="btn btn-primary btn-sm" id="emptyStateNewPlanBtn">${i18n.t('newPlanBtn')}</button>
+          <button class="btn btn-secondary btn-sm" id="emptyStateLoadSeedBtn">${i18n.t('loadExampleBtn')}</button>
+        </div>
       </div>
     `;
     return;
@@ -350,8 +370,11 @@ export function renderDoColumn(todos, doLogs, selectedPlan, activeTags = []) {
   }
 
   for (const todo of todos) {
-    const isDelayed = isDelayedKST(todo.due_date, todo.is_completed);
-    const todoLogs = doLogs.filter(l => l.todo_id === todo.id);
+    const todoLogs = doLogs.filter(l => String(l.todo_id) === String(todo.id));
+    const totalActualMins = todoLogs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
+    const isDateDelayed = isDelayedKST(todo.due_date, todo.is_completed);
+    const isTimeOverrun = totalActualMins > (parseInt(todo.estimated_minutes, 10) || 0);
+    const isDelayed = isDateDelayed || isTimeOverrun;
     const hasBlocker = todoLogs.some(l => l.blocked_reason && l.blocked_reason.trim().length > 0);
     const latestBlocker = todoLogs.find(l => l.blocked_reason && l.blocked_reason.trim().length > 0)?.blocked_reason;
 
@@ -365,10 +388,12 @@ export function renderDoColumn(todos, doLogs, selectedPlan, activeTags = []) {
             <div class="card-title todo-title ${todo.is_completed ? 'completed' : ''}">${escapeHtml(todo.title)}</div>
             <div class="card-meta" style="margin-top: 0.25rem;">
               ${getPriorityBadge(todo.priority)}
-              <span style="${isDelayed ? 'color: #ef4444; font-weight: 700;' : ''}">
-                ${i18n.t('dueLabel')} ${escapeHtml(todo.due_date)}${isDelayed ? ` ${i18n.t('delayedBadge')}` : ''}
+              <span style="${isDateDelayed ? 'color: #ef4444; font-weight: 700;' : ''}">
+                ${i18n.t('dueLabel')} ${escapeHtml(todo.due_date)}${isDateDelayed ? ` ${i18n.t('delayedBadge')}` : ''}
               </span>
-              <span>${escapeHtml(todo.estimated_minutes)}${i18n.t('minutesUnit')}</span>
+              <span style="${isTimeOverrun ? 'color: #ef4444; font-weight: 700;' : ''}">
+                ${i18n.t('estimatedLabel')} ${escapeHtml(todo.estimated_minutes)}${i18n.t('minutesUnit')}${totalActualMins > 0 ? ` | ${i18n.t('actualLabel')} ${totalActualMins}${i18n.t('minutesUnit')}` : ''}${isTimeOverrun ? ` (${i18n.getLang() === 'ko' ? '초과' : 'Overrun'})` : ''}
+              </span>
             </div>
           </div>
         </div>
@@ -589,82 +614,93 @@ export function applyLanguageTranslations() {
     sortSelect.value = cur;
   }
 
-  // Column Buttons
-  document.getElementById('colAddPlanBtn').textContent = t('addPlanBtn');
-  document.getElementById('colAddTodoBtn').textContent = t('addTodoBtn');
-  document.getElementById('colReflectBtn').textContent = t('reflectBtn');
+  const setTxt = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val !== undefined) el.textContent = val;
+  };
+  const setPH = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val !== undefined) el.placeholder = val;
+  };
 
-  // Modals
-  document.getElementById('modalPlanTitleLabel').textContent = t('planTitleLabel');
-  document.getElementById('planTitleInput').placeholder = t('planTitlePlaceholder');
-  document.getElementById('modalPlanStartLabel').textContent = t('startDateLabel');
-  document.getElementById('modalPlanEndLabel').textContent = t('endDateLabel');
-  document.getElementById('modalPlanPriorityLabel').textContent = t('priorityLabel');
-  document.getElementById('modalPlanHoursLabel').textContent = t('estimatedHoursLabel');
-  document.getElementById('planHoursInput').placeholder = t('estimatedHoursPlaceholder');
-  document.getElementById('modalPlanCriteriaLabel').textContent = t('successCriteriaLabel');
-  document.getElementById('planCriteriaInput').placeholder = t('successCriteriaPlaceholder');
-  document.getElementById('modalPlanRevisionReasonLabel').textContent = t('revisionReasonLabel');
-  document.getElementById('planRevisionReasonInput').placeholder = t('revisionReasonPlaceholder');
-  document.getElementById('planModalCancelBtn').textContent = t('cancelBtn');
-  document.getElementById('planFormSubmitText').textContent = t('savePlanBtn');
+  // Column Buttons
+  setTxt('colAddPlanBtn', t('addPlanBtn'));
+  setTxt('colAddTodoBtn', t('addTodoBtn'));
+  setTxt('colReflectBtn', t('reflectBtn'));
+
+  // Modals - Plan Modal
+  setTxt('modalPlanTitleLabel', t('planTitleLabel'));
+  setPH('planTitleInput', t('planTitlePlaceholder'));
+  setTxt('modalPlanStartLabel', t('startDateLabel'));
+  setTxt('modalPlanEndLabel', t('endDateLabel'));
+  setTxt('modalPlanPriorityLabel', t('priorityLabel'));
+  setTxt('modalPlanHoursLabel', t('estimatedHoursLabel'));
+  setPH('planHoursInput', t('estimatedHoursPlaceholder'));
+  setTxt('modalPlanCriteriaLabel', t('successCriteriaLabel'));
+  setPH('planCriteriaInput', t('successCriteriaPlaceholder'));
+  setTxt('modalPlanRevisionReasonLabel', t('revisionReasonLabel'));
+  setPH('planRevisionReasonInput', t('revisionReasonPlaceholder'));
+  setTxt('planModalCancelBtn', t('cancelBtn'));
+  setTxt('planFormSubmitText', t('savePlanBtn'));
+  setTxt('planReplicateTodosLabel', t('replicateTodosLabel'));
 
   // To Do Modal
-  document.getElementById('modalTodoPlanLabel').textContent = t('linkedPlanLabel');
-  document.getElementById('modalTodoTitleLabel').textContent = t('todoTitleLabel');
-  document.getElementById('todoTitleInput').placeholder = t('todoTitlePlaceholder');
-  document.getElementById('modalTodoDueLabel').textContent = t('dueDateLabel');
-  document.getElementById('modalTodoPriorityLabel').textContent = t('priorityLabel');
-  document.getElementById('modalTodoMinutesLabel').textContent = t('estimatedMinutesLabel');
-  document.getElementById('modalTodoTagsLabel').textContent = t('tagsLabel');
-  document.getElementById('todoTagsInput').placeholder = t('tagsPlaceholder');
-  document.getElementById('modalTodoDescLabel').textContent = t('descriptionLabel');
-  document.getElementById('todoDescInput').placeholder = t('descriptionPlaceholder');
-  document.getElementById('todoModalCancelBtn').textContent = t('cancelBtn');
-  document.getElementById('todoFormSubmitText').textContent = t('saveTodoBtn');
+  setTxt('modalTodoPlanLabel', t('linkedPlanLabel'));
+  setTxt('modalTodoTitleLabel', t('todoTitleLabel'));
+  setPH('todoTitleInput', t('todoTitlePlaceholder'));
+  setTxt('modalTodoDueLabel', t('dueDateLabel'));
+  setTxt('modalTodoPriorityLabel', t('priorityLabel'));
+  setTxt('modalTodoMinutesLabel', t('estimatedMinutesLabel'));
+  setTxt('modalTodoTagsLabel', t('tagsLabel'));
+  setPH('todoTagsInput', t('tagsPlaceholder'));
+  setTxt('modalTodoDescLabel', t('descriptionLabel'));
+  setPH('todoDescInput', t('descriptionPlaceholder'));
+  setTxt('todoModalCancelBtn', t('cancelBtn'));
+  setTxt('todoFormSubmitText', t('saveTodoBtn'));
 
   // Priority Pill Labels
   document.querySelectorAll('#planPriorityPills .priority-pill-btn, #todoPriorityPills .priority-pill-btn').forEach(btn => {
     const p = btn.dataset.priority;
-    btn.textContent = t(`priority${p.charAt(0).toUpperCase() + p.slice(1)}`);
+    if (p) btn.textContent = t(`priority${p.charAt(0).toUpperCase() + p.slice(1)}`);
   });
 
   // Exec Modal
-  document.getElementById('execLiveTimerLabel').textContent = t('liveTimerLabel');
-  document.getElementById('execTimerStartBtn').textContent = t('startTimerBtn');
-  document.getElementById('execTimerStopBtn').textContent = t('stopTimerBtn');
-  document.getElementById('execTimerResetBtn').textContent = t('resetTimerBtn');
-  document.getElementById('modalExecStartLabel').textContent = t('startTimeLabel');
-  document.getElementById('modalExecEndLabel').textContent = t('endTimeLabel');
-  document.getElementById('modalExecMinutesLabel').textContent = t('actualMinutesLabel');
-  document.getElementById('modalExecBlockerLabel').textContent = t('blockedInputLabel');
-  document.getElementById('execBlockerInput').placeholder = t('blockedInputPlaceholder');
-  document.getElementById('execModalCancelBtn').textContent = t('cancelBtn');
-  document.getElementById('execSaveLogOnlyBtn').textContent = t('saveLogOnlyBtn');
-  document.getElementById('execCompleteAndLogBtn').textContent = t('completeAndLogBtn');
+  setTxt('execLiveTimerLabel', t('liveTimerLabel'));
+  setTxt('execTimerStartBtn', t('startTimerBtn'));
+  setTxt('execTimerStopBtn', t('stopTimerBtn'));
+  setTxt('execTimerResetBtn', t('resetTimerBtn'));
+  setTxt('modalExecStartLabel', t('startTimeLabel'));
+  setTxt('modalExecEndLabel', t('endTimeLabel'));
+  setTxt('modalExecMinutesLabel', t('actualMinutesLabel'));
+  setTxt('modalExecBlockerLabel', t('blockedInputLabel'));
+  setPH('execBlockerInput', t('blockedInputPlaceholder'));
+  setTxt('execModalCancelBtn', t('cancelBtn'));
+  setTxt('execSaveLogOnlyBtn', t('saveLogOnlyBtn'));
+  setTxt('execCompleteAndLogBtn', t('completeAndLogBtn'));
 
   // Reflection Modal
-  document.getElementById('seeModalTitle').textContent = t('seeModalTitle');
-  document.getElementById('modalSeeDateLabel').textContent = t('reviewDateLabel');
-  document.getElementById('modalSeeInsightLabel').textContent = t('insightLabel');
-  document.getElementById('seeInsightInput').placeholder = t('insightPlaceholder');
-  document.getElementById('seeModalCancelBtn').textContent = t('cancelBtn');
-  document.getElementById('seeFormSubmitBtn').textContent = t('saveReflectionBtn');
+  setTxt('seeModalTitle', t('seeModalTitle'));
+  setTxt('modalSeeDateLabel', t('reviewDateLabel'));
+  setTxt('modalSeeInsightLabel', t('insightLabel'));
+  setPH('seeInsightInput', t('insightPlaceholder'));
+  setTxt('seeModalCancelBtn', t('cancelBtn'));
+  setTxt('seeFormSubmitBtn', t('saveReflectionBtn'));
 
   // Dirty Modal
-  document.getElementById('dirtyModalTitle').textContent = t('dirtyModalTitle');
-  document.getElementById('dirtyModalBody').textContent = t('dirtyModalBody');
-  document.getElementById('dirtyConfirmKeepBtn').textContent = t('keepEditingBtn');
-  document.getElementById('dirtyConfirmDiscardBtn').textContent = t('discardBtn');
+  setTxt('dirtyModalTitle', t('dirtyModalTitle'));
+  setTxt('dirtyModalBody', t('dirtyModalBody'));
+  setTxt('dirtyConfirmKeepBtn', t('keepEditingBtn'));
+  setTxt('dirtyConfirmDiscardBtn', t('discardBtn'));
 
   // Reset Modal
-  document.getElementById('resetModalTitle').textContent = t('resetModalTitle');
-  document.getElementById('resetModalCancelBtn').textContent = t('cancelBtn');
-  document.getElementById('resetModalConfirmBtn').textContent = t('resetConfirmBtn');
+  setTxt('resetModalTitle', t('resetModalTitle'));
+  setTxt('resetModalCancelBtn', t('cancelBtn'));
+  setTxt('resetModalSeedBtn', t('resetSeedBtn'));
+  setTxt('resetModalConfirmBtn', t('resetConfirmBtn'));
 
   // Import Modal
-  document.getElementById('importModalTitle').textContent = t('importModalTitle');
-  document.getElementById('importModalDesc').textContent = t('importModalDesc');
-  document.getElementById('importModalCancelBtn').textContent = t('cancelBtn');
-  document.getElementById('importModalSubmitBtn').textContent = t('importSubmitBtn');
+  setTxt('importModalTitle', t('importModalTitle'));
+  setTxt('importModalDesc', t('importModalDesc'));
+  setTxt('importModalCancelBtn', t('cancelBtn'));
+  setTxt('importModalSubmitBtn', t('importSubmitBtn'));
 }

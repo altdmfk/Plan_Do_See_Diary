@@ -39,6 +39,9 @@ export const CONFIG = {
   // Limits & Safeguards
   MAX_IMPORT_SIZE_BYTES: 5 * 1024 * 1024, // 5 MB
   TOAST_DURATION_MS: 3500,
+
+  // Synthetic Data Seeding Toggle (Set to false for completely blank diary)
+  ENABLE_SYNTHETIC_SEED: true,
   
   // Supabase Configuration (Explicit Environment / Global Variables)
   SUPABASE: {

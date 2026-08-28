@@ -75,7 +75,7 @@ export const I18N = {
     varianceLabel: '시간 차이:',
     feedbackLoopTitle: 'Plan 개선 반영',
     feedbackLoopDesc: '지난 실행 분석과 인사이트를 다음 계획 수립에 바로 연결합니다.',
-    advanceFeedbackBtn: '다음 계획에 개선 사항 반영하기',
+    advanceFeedbackBtn: '피드백 개선 계획',
     previousReflectionsTitle: '이전 회고 기록',
 
     // Modals
@@ -108,7 +108,7 @@ export const I18N = {
     descriptionPlaceholder: '예: 스트레칭 10분, 러닝 30분 진행하기',
     saveTodoBtn: '할 일 저장',
 
-    execLoggerTitle: 'Do 시간 기록 및 타이머',
+    execLoggerTitle: 'Do 실행 기록',
     liveTimerLabel: '실시간 측정 타이머',
     startTimerBtn: '타이머 시작',
     stopTimerBtn: '타이머 정지',
@@ -136,9 +136,12 @@ export const I18N = {
     keepEditingBtn: '계속 작성',
     discardBtn: '변경사항 취소',
 
-    resetModalTitle: '합성 데이터 초기화',
-    resetModalBody: '현재 활성화된 <strong id="resetTargetScopeLabel">Scope A</strong>의 모든 데이터가 0건으로 초기화됩니다.<br><br>다른 스코프의 데이터는 <strong>100% 안전하게 보존</strong>됩니다.',
+    resetModalTitle: '데이터 초기화 및 관리',
+    resetModalBody: '현재 선택된 <strong id="resetTargetScopeLabel">Scope A</strong>의 데이터를 0건으로 비우거나, 예시 데이터를 다시 채울 수 있습니다.<br><br><span style="font-size: 0.8rem; color: var(--color-text-muted);">(다른 스코프의 데이터는 <strong>100% 안전하게 격리 보존</strong>됩니다.)</span>',
+    resetSeedBtn: '예시 데이터 생성',
     resetConfirmBtn: '0건으로 완전 초기화',
+    loadExampleBtn: '예시 데이터 생성',
+    loadExampleSuccess: '예시 데이터가 생성되었습니다.',
 
     importModalTitle: 'JSON 백업 파일 가져오기',
     importModalDesc: '유효한 Plan-Do-See 백업 JSON 파일(최대 5MB)을 선택하세요. 이전 버전 스키마(v1) 자동 변환 및 무결성 검증이 지원됩니다.',
@@ -149,11 +152,14 @@ export const I18N = {
     timeRangeError: '종료 시간은 시작 시간 이후여야 합니다.',
     dateRangeError: '종료일은 시작일 이후여야 합니다.',
     minDurationRequired: '예상 소요 시간은 최소 1분 이상이어야 합니다.',
+    textTooLong: '입력 내용이 너무 깁니다. (최대 {max}자)',
     todoDueDateExceedsPlan: '할 일 마감일은 계획 종료일({date}) 이후로 설정할 수 없습니다.',
     planHoursLessThanTodos: '계획 목표 시간({hours}분)은 등록된 할 일들의 예상 시간 합계({todoMinutes}분)보다 작을 수 없습니다.',
     todosExceedPlanHours: '할 일들의 예상 시간 합계({totalMinutes}분)가 계획의 목표 시간({planHours}분)을 초과할 수 없습니다.',
     planSaved: '계획이 저장되었습니다.',
     planUpdated: '계획이 수정되고 이전 버전이 스냅샷으로 보존되었습니다.',
+    replicateTodosLabel: '이전 계획의 할 일(Do) 목록도 함께 복제하기',
+    feedbackPlanCreatedWithTodos: '피드백 개선 계획과 할 일이 함께 생성되었습니다.',
     planDeleted: '계획이 삭제되었습니다.',
     todoAdded: '새로운 할 일이 추가되었습니다.',
     todoUpdated: '할 일이 수정되었습니다.',
@@ -168,7 +174,13 @@ export const I18N = {
     resetSuccess: '데이터가 0건으로 초기화되었습니다.',
     selectPlanFirst: '먼저 계획을 선택해 주세요.',
     noChangesMade: '변경된 계획 내용이 없습니다.',
-    tagFilterActive: '태그 필터'
+    tagFilterActive: '태그 필터',
+    actionDuplicate: '이미 처리된 요청입니다.',
+    fileReadFailed: '파일을 읽는데 실패했습니다.',
+    importErrorPrefix: '가져오기 오류: ',
+    enterPlanTitle: '계획 제목을 입력하세요.',
+    enterTodoTitle: '할 일 제목을 입력하세요.',
+    enterInsight: '개선 인사이트 및 회고 내용을 입력하세요.'
   },
 
   en: {
@@ -198,9 +210,9 @@ export const I18N = {
     colPlanTitle: '1. Plan',
     colDoTitle: '2. Do',
     colSeeTitle: '3. See',
-    addPlanBtn: '+ Plan',
-    addTodoBtn: '+ To Do',
-    reflectBtn: 'Reflect',
+    addPlanBtn: '+ Add Plan',
+    addTodoBtn: '+ Add To Do',
+    reflectBtn: 'Write Reflection',
 
     // Priorities
     priorityUrgent: 'Urgent',
@@ -210,7 +222,7 @@ export const I18N = {
 
     // Empty States
     emptyPlanTitle: 'No active plans',
-    emptyPlanDesc: 'No active plans for this cycle. Click New Plan to structure your goals.',
+    emptyPlanDesc: 'No active plans for this cycle. Click New Plan or generate examples to structure your goals.',
     emptyDoTitle: 'All clear!',
     emptyDoDesc: 'Plan items will appear here as actionable To Dos. Add a To Do to start execution.',
     emptySeeTitle: 'No analytics data',
@@ -228,7 +240,7 @@ export const I18N = {
     blockedReasonLabel: 'Blocked Reason:',
     hoursUnit: 'h',
     minutesUnit: 'm',
-    tzLabel: 'EDT',
+    tzLabel: 'KST',
 
     // See Metrics
     metricPlanned: 'Planned',
@@ -241,7 +253,7 @@ export const I18N = {
     varianceLabel: 'Variance:',
     feedbackLoopTitle: 'Plan Feedback Loop',
     feedbackLoopDesc: 'Connect retrospective adjustments and learnings directly into the next Plan cycle.',
-    advanceFeedbackBtn: 'Advance Insight into Next Plan',
+    advanceFeedbackBtn: 'Advance Feedback Plan',
     previousReflectionsTitle: 'Previous Reflections',
 
     // Modals
@@ -249,8 +261,8 @@ export const I18N = {
     editPlanTitle: 'Edit Plan',
     planTitleLabel: 'Plan Goal / Title *',
     planTitlePlaceholder: 'e.g. Weekly Health & Fitness Routine',
-    startDateLabel: 'Start Date (EDT) *',
-    endDateLabel: 'End Date (EDT) *',
+    startDateLabel: 'Start Date (KST) *',
+    endDateLabel: 'End Date (KST) *',
     priorityLabel: 'Priority',
     estimatedHoursLabel: 'Estimated Time',
     estimatedHoursPlaceholder: 'e.g. 600',
@@ -266,7 +278,7 @@ export const I18N = {
     linkedPlanLabel: 'Linked Plan *',
     todoTitleLabel: 'To Do Title *',
     todoTitlePlaceholder: 'e.g. 40 minutes treadmill workout at the gym',
-    dueDateLabel: 'Due Date (EDT) *',
+    dueDateLabel: 'Due Date (KST) *',
     estimatedMinutesLabel: 'Estimated Time',
     tagsLabel: 'Tags (comma-separated)',
     tagsPlaceholder: 'e.g. Workout, Health, Habits',
@@ -277,22 +289,22 @@ export const I18N = {
     execLoggerTitle: 'Do Execution Logger',
     liveTimerLabel: 'Live Elapsed Time',
     startTimerBtn: 'Start Timer',
-    stopTimerBtn: 'Stop',
-    resetTimerBtn: 'Reset',
+    stopTimerBtn: 'Stop Timer',
+    resetTimerBtn: 'Reset Timer',
     startTimeLabel: 'Start Time',
     endTimeLabel: 'End Time',
     actualMinutesLabel: 'Actual Elapsed Minutes *',
     blockedInputLabel: 'Blocked Reason',
     blockedInputPlaceholder: 'If execution was delayed, describe what blocked progress (e.g. Overtime)',
     saveLogOnlyBtn: 'Save Log Only',
-    completeAndLogBtn: 'Complete & Log (Idempotent)',
+    completeAndLogBtn: 'Complete & Save Log',
 
     historyModalTitle: 'Revision History',
     noHistoryText: 'No previous revisions recorded yet.<br>Revisions are created automatically when a plan is updated.',
     revisionNumberLabel: 'Revision #',
 
     seeModalTitle: 'Retrospective Reflection',
-    reviewDateLabel: 'Review Evaluation Date (EDT) *',
+    reviewDateLabel: 'Review Evaluation Date (KST) *',
     insightLabel: 'Adjustment Insight / Retrospective *',
     insightPlaceholder: 'e.g. Evening workouts were delayed due to fatigue. Plan to shift 2 sessions to the morning next cycle.',
     saveReflectionBtn: 'Save Reflection',
@@ -302,9 +314,12 @@ export const I18N = {
     keepEditingBtn: 'Keep Editing',
     discardBtn: 'Discard Changes',
 
-    resetModalTitle: 'Reset Synthetic Scope Data',
-    resetModalBody: 'This will purge all database records for <strong id="resetTargetScopeLabel">Scope A</strong> down to 0 rows.<br><br>The other scope will remain <strong>100% untouched</strong>.',
-    resetConfirmBtn: 'Purge to 0 Rows',
+    resetModalTitle: 'Reset & Manage Data',
+    resetModalBody: 'You can purge all records for <strong id="resetTargetScopeLabel">Scope A</strong> to 0 rows, or reload example demo data.<br><br><span style="font-size: 0.8rem; color: var(--color-text-muted);">(The other scope will remain <strong>100% untouched and isolated</strong>.)</span>',
+    resetSeedBtn: 'Generate Examples',
+    resetConfirmBtn: 'Purge to 0 Items',
+    loadExampleBtn: 'Generate Examples',
+    loadExampleSuccess: 'Example data generated successfully.',
 
     importModalTitle: 'Import JSON Backup',
     importModalDesc: 'Select a valid Plan-Do-See JSON backup file (max 5MB). Automatic legacy v1 migration and atomic rollback validation are enabled.',
@@ -315,11 +330,14 @@ export const I18N = {
     timeRangeError: 'End time must be after start time.',
     dateRangeError: 'End date must be after start date.',
     minDurationRequired: 'Estimated duration must be at least 1 minute.',
+    textTooLong: 'Input text is too long (Max {max} characters).',
     todoDueDateExceedsPlan: 'To Do due date cannot be after the plan end date ({date}).',
     planHoursLessThanTodos: 'Plan estimated time ({hours}m) cannot be less than the total To Do estimated time ({todoMinutes}m).',
     todosExceedPlanHours: 'Total To Do estimated minutes ({totalMinutes}m) cannot exceed the plan target ({planHours}m).',
     planSaved: 'Plan saved successfully.',
     planUpdated: 'Plan updated and revision snapshot saved.',
+    replicateTodosLabel: 'Replicate tasks (Do) from previous plan',
+    feedbackPlanCreatedWithTodos: 'Feedback plan and tasks replicated successfully.',
     planDeleted: 'Plan deleted successfully.',
     todoAdded: 'To Do added to plan.',
     todoUpdated: 'To Do updated successfully.',
@@ -328,13 +346,19 @@ export const I18N = {
     todoInProgress: 'To Do moved to In Progress.',
     scopeSwitched: 'Switched session scope (Clean state loaded).',
     themeChanged: 'Theme changed.',
-    langChanged: 'Language set to English (EDT time active).',
+    langChanged: 'Language set to English.',
     backupExported: 'Backup JSON exported successfully.',
     backupImported: 'Backup restored and migrated successfully (0 duplicate rows).',
     resetSuccess: 'Active scope data purged to 0 rows.',
     selectPlanFirst: 'Please select a plan first.',
     noChangesMade: 'No changes were made to the plan.',
-    tagFilterActive: 'Tag Filter'
+    tagFilterActive: 'Tag Filter',
+    actionDuplicate: 'Action already recorded.',
+    fileReadFailed: 'Failed to read file from disk.',
+    importErrorPrefix: 'Import Error: ',
+    enterPlanTitle: 'Please enter a plan title.',
+    enterTodoTitle: 'Please enter a To Do title.',
+    enterInsight: 'Please enter retrospective insight.'
   }
 };
 

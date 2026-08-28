@@ -5,9 +5,11 @@
 import { getKSTParts, getKSTToday, getKSTWeekRange, isSameKSTWeek, getKSTMonthRange, isDelayedKST, calculateElapsedMinutes } from '../js/dateUtils.js';
 import { validateFileSize, migrateLegacySchema, validateImportPayload } from '../js/validators.js';
 import { dbClient } from '../js/supabaseClient.js';
+import { API } from '../js/api.js';
 import { escapeHtml } from '../js/ui.js';
 import { CONFIG } from '../js/config.js';
 import { encryptText, decryptText, isEncrypted } from '../js/crypto.js';
+import { appState } from '../js/state.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -78,18 +80,10 @@ async function runAllTests() {
   assert(!sanitized.includes('<script>'), 'Script tags escaped');
   assert(sanitized.includes('&lt;script&gt;'), 'Safe literal entity conversion verified');
 
-  // --- 3. ATOMIC IMPORT & LEGACY MIGRATION ---
-  console.log('\n--- [3] Import Validation & Legacy Migration Tests ---');
+  // --- 3. ATOMIC IMPORT & LEGACY MIGRATION (1 Legacy + 4 Invalid Files + Lifecycle) ---
+  console.log('\n--- [3] Import Validation, 1 Legacy Format & 4 Invalid Files Tests ---');
   
-  // 5MB Limit Check
-  try {
-    validateFileSize(6 * 1024 * 1024);
-    assert(false, 'Should have failed 5MB check');
-  } catch (err) {
-    assert(err.message.includes('5MB limit'), 'Payload > 5MB correctly rejected');
-  }
-
-  // Legacy Schema Migration Check (v1 flat structure)
+  // [3a] 1 Legacy Format Test (이전 형식 1건 v1 마이그레이션)
   const legacyV1 = {
     version: '1.0.0',
     plans: [
@@ -124,38 +118,108 @@ async function runAllTests() {
   };
 
   const migrated = migrateLegacySchema(legacyV1, 'scope_a');
-  assert(migrated.version === '2.0.0', 'Migrated schema version upgraded to 2.0.0');
-  assert(migrated.plans[0].title === 'Legacy Plan Title', 'plan_title mapped to title');
-  assert(migrated.plans[0].estimated_hours === 2, 'estimated_minutes converted to estimated_hours');
-  assert(migrated.todos[0].title === 'Legacy Task', 'task_name mapped to title');
-  assert(migrated.do_logs[0].blocked_reason === 'Legacy obstacle', 'blocker mapped to blocked_reason');
+  assert(migrated.version === '2.0.0', 'Legacy v1 schema version upgraded to 2.0.0');
+  assert(migrated.plans[0].title === 'Legacy Plan Title', 'Legacy plan_title mapped to title');
+  assert(migrated.plans[0].estimated_hours === 2, 'Legacy estimated_minutes converted to estimated_hours');
+  assert(migrated.todos[0].title === 'Legacy Task', 'Legacy task_name mapped to title');
+  assert(migrated.do_logs[0].blocked_reason === 'Legacy obstacle', 'Legacy blocker mapped to blocked_reason');
+  const validatedMigrated = validateImportPayload(migrated, 'scope_a');
+  assert(validatedMigrated.plans.length === 1, 'Validated migrated legacy payload successfully');
 
-  const validated = validateImportPayload(migrated, 'scope_a');
-  assert(validated.plans.length === 1, 'Validated migrated payload successfully');
+  // [3b] 4 Invalid Files Tests (잘못된 파일 4건 거부 검증)
+  // Invalid File 1: 5MB File Size Exceeded (용량 5MB 초과 파일)
+  let invalid1Blocked = false;
+  try {
+    await API.importBackup(JSON.stringify(migrated), 6 * 1024 * 1024);
+  } catch (err) {
+    invalid1Blocked = err.message.includes('5MB limit');
+  }
+  assert(invalid1Blocked, 'Invalid File 1 Rejected: Payload > 5MB blocked with 5MB limit error');
 
-  // Corrupt validation test (Duplicate ID check)
-  const corruptPayload = JSON.parse(JSON.stringify(migrated));
-  corruptPayload.todos.push({
-    id: '11111111-1111-4111-8111-111111111111', // Duplicate ID matching Plan
+  // Invalid File 2: Malformed JSON Syntax (구문 오류 / 비정상 JSON 파일)
+  let invalid2Blocked = false;
+  try {
+    await API.importBackup('{ malformed_json: true, ...broken', 100);
+  } catch (err) {
+    invalid2Blocked = err.message.includes('Malformed JSON');
+  }
+  assert(invalid2Blocked, 'Invalid File 2 Rejected: Malformed non-JSON syntax blocked with parse error');
+
+  // Invalid File 3: Duplicate Primary Key Collision (기본키 중복 파일)
+  const duplicateIdPayload = JSON.parse(JSON.stringify(migrated));
+  duplicateIdPayload.todos.push({
+    id: '11111111-1111-4111-8111-111111111111', // Collision with Plan ID
     plan_id: '11111111-1111-4111-8111-111111111111',
     title: 'Collision Task',
     due_date: '2026-01-07',
     priority: 'medium',
     is_completed: false
   });
-
+  let invalid3Blocked = false;
   try {
-    validateImportPayload(corruptPayload, 'scope_a');
-    assert(false, 'Should fail duplicate ID validation');
+    validateImportPayload(duplicateIdPayload, 'scope_a');
   } catch (err) {
-    assert(err.message.includes('Duplicate primary key ID'), 'Duplicate primary key detected and blocked atomically');
+    invalid3Blocked = err.message.includes('Duplicate primary key ID');
   }
+  assert(invalid3Blocked, 'Invalid File 3 Rejected: Duplicate primary key ID detected and blocked atomically');
+
+  // Invalid File 4: Missing Required Fields & Invalid Schema (필수 필드 누락 / 계약 위반 파일)
+  const missingFieldPayload = {
+    version: '2.0.0',
+    scope: 'scope_a',
+    plans: [
+      {
+        id: crypto.randomUUID(),
+        // Missing required title
+        period_start: 'invalid-date-format', // Broken date
+        period_end: '2026-01-07',
+        priority: 'high',
+        status: 'active'
+      }
+    ]
+  };
+  let invalid4Blocked = false;
+  try {
+    validateImportPayload(missingFieldPayload, 'scope_a');
+  } catch (err) {
+    invalid4Blocked = err.message.includes('Validation failed');
+  }
+  assert(invalid4Blocked, 'Invalid File 4 Rejected: Missing required fields and broken dates blocked by contract schema');
+
+  // [3c] Export -> Purge All -> Import Empty State Lifecycle Test (내보내기 → 전체 삭제 → 빈 상태 가져오기)
+  dbClient.setSessionScope('scope_a');
+  const exported = await API.exportBackup();
+  assert(exported.version === '2.0.0' && exported.scope === 'scope_a', 'Lifecycle 1: Exported backup matches formal contract v2');
+
+  await API.purgeCurrentScope();
+  const stateAfterPurge = await API.fetchAll();
+  assert(stateAfterPurge.plans.length === 0 && stateAfterPurge.todos.length === 0, 'Lifecycle 2: Purge cleared all tables to exactly 0 rows');
+
+  const emptyBackupJson = JSON.stringify({
+    version: '2.0.0',
+    scope: 'scope_a',
+    plans: [],
+    plan_histories: [],
+    todos: [],
+    do_logs: [],
+    see_reviews: []
+  });
+  await API.importBackup(emptyBackupJson, emptyBackupJson.length);
+  const stateAfterEmptyImport = await API.fetchAll();
+  assert(
+    stateAfterEmptyImport.plans.length === 0 &&
+    stateAfterEmptyImport.todos.length === 0 &&
+    stateAfterEmptyImport.do_logs.length === 0 &&
+    stateAfterEmptyImport.see_reviews.length === 0,
+    'Lifecycle 3: Importing empty state backup cleanly maintained 0 rows across all tables'
+  );
 
   // --- 4. DATABASE LAYER & SCOPE ISOLATION ---
   console.log('\n--- [4] Database Layer & Persona Scope Isolation Tests ---');
 
   // Load Scope A
   dbClient.setSessionScope('scope_a');
+  dbClient._saveScopeData('scope_a', dbClient._createSeedData('scope_a'));
   const scopeAData = await dbClient.fetchAll('scope_a');
   assert(scopeAData.scope === 'scope_a', 'Scope A data loaded successfully');
   const initialScopeAPlanCount = scopeAData.plans.length;
@@ -656,6 +720,32 @@ async function runAllTests() {
   const rawStorageData = JSON.parse(global.localStorage.getItem(rawStorageKey));
   const storedPlan = rawStorageData.plans.find(p => p.id === createdPlan.id);
   assert(isEncrypted(storedPlan.success_criteria), 'Database record stores encrypted armored ciphertext (enc:v1:...) at rest');
+
+  // --- 6. REACTIVE STATE & METRICS OVERRUN TESTS ---
+  console.log('\n--- [6] Reactive State & Metrics Overrun Tests ---');
+
+  // Test Plan filter dropdown single selection
+  appState.state.plans = [
+    { id: 'plan-1', title: 'Plan 1', priority: 'high' },
+    { id: 'plan-2', title: 'Plan 2', priority: 'medium' }
+  ];
+  appState.setFilters({ planId: 'plan-1' });
+  const filteredSinglePlan = appState.getFilteredPlans();
+  assert(filteredSinglePlan.length === 1 && filteredSinglePlan[0].id === 'plan-1', 'Selecting a plan in dropdown filters Plan column to show only that plan');
+
+  appState.setFilters({ planId: '' });
+  const allFilteredPlans = appState.getFilteredPlans();
+  assert(allFilteredPlans.length === 2, 'Selecting All Plans in dropdown shows all plans');
+
+  // Test Time Overrun counted in delayedCount
+  appState.state.todos = [
+    { id: 'todo-overrun', plan_id: 'plan-1', title: 'Overrun Task', due_date: '2099-01-01', estimated_minutes: 30, is_completed: true }
+  ];
+  appState.state.do_logs = [
+    { id: 'log-overrun', todo_id: 'todo-overrun', actual_minutes: 45, blocked_reason: '' }
+  ];
+  const overrunMetrics = appState.getKSTMetrics('plan-1');
+  assert(overrunMetrics.delayedCount === 1, 'Task with actual minutes > estimated minutes is counted in delayedCount (Time Overrun)');
 
   console.log('\n====================================================');
   console.log(`🎉 ALL ${passedTests}/${totalTests} TESTS PASSED SUCCESSFULLY!`);

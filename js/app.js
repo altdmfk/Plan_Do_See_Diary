@@ -25,7 +25,8 @@ const timerState = {
   intervalId: null,
   startEpoch: null,
   elapsedSeconds: 0,
-  isRunning: false
+  isRunning: false,
+  baseMinutes: 0
 };
 
 const activeCheckboxToggles = new Set();
@@ -84,7 +85,7 @@ function onStateChange(state) {
   // Update Active Plan Selector in Filter Bar
   const planSelect = document.getElementById('planSelectFilter');
   if (planSelect) {
-    const currentVal = state.selectedPlanId || '';
+    const currentVal = state.filters.planId || '';
     planSelect.innerHTML = `<option value="">${i18n.t('allPlans')} (${state.plans.length})</option>` +
       state.plans.map(p => `<option value="${p.id}" ${p.id === currentVal ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('');
   }
@@ -215,7 +216,11 @@ function bindHeaderControls() {
 // --- FILTER CONTROLS ---
 function bindFilterControls() {
   document.getElementById('planSelectFilter').addEventListener('change', (e) => {
-    appState.setSelectedPlan(e.target.value || null);
+    const val = e.target.value || '';
+    appState.setFilters({ planId: val });
+    if (val) {
+      appState.setSelectedPlan(val);
+    }
   });
 
   document.getElementById('searchInput').addEventListener('input', (e) => {
@@ -252,6 +257,23 @@ function bindBoardActions() {
     const emptyBtn = e.target.closest('#emptyStateNewPlanBtn');
     if (emptyBtn) {
       openCreatePlanModal();
+      return;
+    }
+
+    // Empty state load seed data button click
+    const loadSeedBtn = e.target.closest('#emptyStateLoadSeedBtn');
+    if (loadSeedBtn) {
+      try {
+        await API.populateSyntheticSeed();
+        await appState.refreshData();
+        const state = appState.getState();
+        if (state.plans.length > 0) {
+          appState.setSelectedPlan(state.plans[0].id);
+        }
+        showToast(i18n.t('loadExampleSuccess'), 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
       return;
     }
 
@@ -544,18 +566,46 @@ function bindModalForms() {
       }
     }
 
+    const titleVal = document.getElementById('planTitleInput').value.trim();
+    if (!titleVal) {
+      showToast(i18n.t('enterPlanTitle'), 'error');
+      document.getElementById('planTitleInput').focus();
+      unlock();
+      return;
+    }
+    if (titleVal.length > 100) {
+      showToast(i18n.t('textTooLong').replace('{max}', 100), 'error');
+      document.getElementById('planTitleInput').focus();
+      unlock();
+      return;
+    }
+
+    const criteriaVal = document.getElementById('planCriteriaInput').value.trim();
+    if (criteriaVal.length > 1000) {
+      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
+      document.getElementById('planCriteriaInput').focus();
+      unlock();
+      return;
+    }
+
     const payload = {
-      title: document.getElementById('planTitleInput').value.trim(),
+      title: titleVal,
       period_start: startVal,
       period_end: endVal,
       priority: document.getElementById('planPriorityInput').value,
       estimated_hours: estimatedMinutes,
-      success_criteria: document.getElementById('planCriteriaInput').value.trim(),
+      success_criteria: criteriaVal,
       status: 'active'
     };
 
     if (isEdit) {
       const revisionReason = document.getElementById('planRevisionReasonInput').value.trim();
+      if (revisionReason.length > 255) {
+        showToast(i18n.t('textTooLong').replace('{max}', 255), 'error');
+        document.getElementById('planRevisionReasonInput').focus();
+        unlock();
+        return;
+      }
       const existingPlan = appState.getState().plans.find(p => p.id === id);
 
       // Verify that actual plan data changed
@@ -586,12 +636,55 @@ function bindModalForms() {
         showToast(i18n.t('planUpdated'), 'success');
       } else {
         const createdPlan = await API.createPlan(payload);
+
+        const repGroup = document.getElementById('planReplicateTodosGroup');
+        const repCheck = document.getElementById('planReplicateTodosCheckbox');
+        const sourceInput = document.getElementById('planSourcePlanIdInput');
+        const isReplicateActive = repGroup && repGroup.style.display !== 'none' && repCheck && repCheck.checked;
+        const sourcePlanId = sourceInput ? sourceInput.value : '';
+
+        if (isReplicateActive && sourcePlanId) {
+          const sourceTodos = appState.getState().todos.filter(t => String(t.plan_id) === String(sourcePlanId));
+          const totalTodosMin = sourceTodos.reduce((sum, st) => sum + (Number(st.estimated_minutes) || 0), 0);
+          if (totalTodosMin > (Number(createdPlan.estimated_hours) || 0)) {
+            await API.updatePlan(createdPlan.id, {
+              estimated_hours: totalTodosMin,
+              revision_reason: 'Budget expanded for replicated tasks'
+            }).catch(() => {});
+          }
+
+          for (const st of sourceTodos) {
+            try {
+              let targetDueDate = st.due_date;
+              if (createdPlan.period_end && (!targetDueDate || targetDueDate > createdPlan.period_end || targetDueDate < createdPlan.period_start)) {
+                targetDueDate = createdPlan.period_end;
+              }
+              await API.createTodo({
+                plan_id: createdPlan.id,
+                title: st.title,
+                due_date: targetDueDate || getKSTToday(),
+                priority: st.priority || 'medium',
+                estimated_minutes: st.estimated_minutes,
+                tags: Array.isArray(st.tags) ? st.tags : [],
+                description: st.description || ''
+              });
+            } catch (err) {
+              console.warn('Replicating todo failed:', err.message);
+            }
+          }
+        }
+
         modalManager.forceClose('planModal');
         // Clear search query so new plan is immediately visible
         appState.setFilters({ search: '' });
         await appState.refreshData();
         appState.setSelectedPlan(createdPlan.id);
-        showToast(i18n.t('planSaved'), 'success');
+        
+        if (isReplicateActive && sourcePlanId) {
+          showToast(i18n.t('feedbackPlanCreatedWithTodos'), 'success');
+        } else {
+          showToast(i18n.t('planSaved'), 'success');
+        }
       }
     } catch (err) {
       showToast(err.message, 'error');
@@ -702,16 +795,44 @@ function bindModalForms() {
     }
 
     const tagsRaw = document.getElementById('todoTagsInput').value;
+    if (tagsRaw.length > 150) {
+      showToast(i18n.t('textTooLong').replace('{max}', 150), 'error');
+      document.getElementById('todoTagsInput').focus();
+      unlock();
+      return;
+    }
     const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+
+    const todoTitle = document.getElementById('todoTitleInput').value.trim();
+    if (!todoTitle) {
+      showToast(i18n.t('enterTodoTitle'), 'error');
+      document.getElementById('todoTitleInput').focus();
+      unlock();
+      return;
+    }
+    if (todoTitle.length > 100) {
+      showToast(i18n.t('textTooLong').replace('{max}', 100), 'error');
+      document.getElementById('todoTitleInput').focus();
+      unlock();
+      return;
+    }
+
+    const descVal = document.getElementById('todoDescInput').value.trim();
+    if (descVal.length > 1000) {
+      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
+      document.getElementById('todoDescInput').focus();
+      unlock();
+      return;
+    }
 
     const payload = {
       plan_id: planId,
-      title: document.getElementById('todoTitleInput').value.trim(),
+      title: todoTitle,
       due_date: dueDate,
       priority: document.getElementById('todoPriorityInput').value,
       estimated_minutes: estimatedMinutes,
       tags: tags,
-      description: document.getElementById('todoDescInput').value.trim()
+      description: descVal
     };
 
     try {
@@ -805,6 +926,12 @@ function bindModalForms() {
     const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
     const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
     const blockedReason = document.getElementById('execBlockerInput').value.trim();
+    if (blockedReason.length > 1000) {
+      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
+      document.getElementById('execBlockerInput').focus();
+      unlock();
+      return;
+    }
 
     try {
       const result = await API.completeTodoIdempotent(todoId, {
@@ -817,7 +944,7 @@ function bindModalForms() {
       stopTimer();
       modalManager.forceClose('execModal');
       await appState.refreshData();
-      showToast(result.isDuplicate ? 'Action already recorded.' : i18n.t('todoCompleted'), 'success');
+      showToast(result.isDuplicate ? (i18n.getLang() === 'ko' ? '이미 처리된 요청입니다.' : 'Action already recorded.') : i18n.t('todoCompleted'), 'success');
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -868,6 +995,12 @@ function bindModalForms() {
     const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
     const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
     const blockedReason = document.getElementById('execBlockerInput').value.trim();
+    if (blockedReason.length > 1000) {
+      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
+      document.getElementById('execBlockerInput').focus();
+      unlock();
+      return;
+    }
 
     try {
       await API.addDoLog(todoId, {
@@ -926,6 +1059,18 @@ function bindModalForms() {
     const metrics = appState.getKSTMetrics(planId);
     const reviewDate = document.getElementById('seeReviewDateInput').value;
     const insight = document.getElementById('seeInsightInput').value.trim();
+    if (!insight) {
+      showToast(i18n.t('enterInsight'), 'error');
+      document.getElementById('seeInsightInput').focus();
+      unlock();
+      return;
+    }
+    if (insight.length > 1000) {
+      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
+      document.getElementById('seeInsightInput').focus();
+      unlock();
+      return;
+    }
 
     try {
       await API.createSeeReview({
@@ -976,12 +1121,35 @@ function bindModalForms() {
     try {
       await API.purgeCurrentScope();
       modalManager.forceClose('resetModal');
-      await appState.init();
+      await appState.refreshData();
+      appState.setSelectedPlan(null);
       showToast(i18n.t('resetSuccess'), 'success');
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
       unlock();
+    }
+  });
+
+  // Reset Modal: Populate Synthetic Seed (Generate Examples)
+  let isSubmittingSeed = false;
+  document.getElementById('resetModalSeedBtn')?.addEventListener('click', async () => {
+    if (isSubmittingSeed) return;
+    isSubmittingSeed = true;
+
+    try {
+      await API.populateSyntheticSeed();
+      modalManager.forceClose('resetModal');
+      await appState.refreshData();
+      const state = appState.getState();
+      if (state.plans.length > 0) {
+        appState.setSelectedPlan(state.plans[0].id);
+      }
+      showToast(i18n.t('loadExampleSuccess'), 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      isSubmittingSeed = false;
     }
   });
 
@@ -1025,16 +1193,22 @@ function bindModalForms() {
         await API.importBackup(text, file.size);
         modalManager.forceClose('importModal');
         await appState.refreshData();
+        const state = appState.getState();
+        if (state.plans.length > 0) {
+          appState.setSelectedPlan(state.plans[0].id);
+        } else {
+          appState.setSelectedPlan(null);
+        }
         showToast(i18n.t('backupImported'), 'success');
       } catch (err) {
-        showToast(`Import Error: ${err.message}`, 'error', 6000);
+        showToast(i18n.getLang() === 'ko' ? `가져오기 오류: ${err.message}` : `Import Error: ${err.message}`, 'error', 6000);
       } finally {
         unlock();
       }
     };
 
     reader.onerror = () => {
-      showToast('Failed to read file from disk.', 'error');
+      showToast(i18n.getLang() === 'ko' ? '파일을 읽는데 실패했습니다.' : 'Failed to read file from disk.', 'error');
       unlock();
     };
 
@@ -1054,6 +1228,10 @@ function openCreatePlanModal() {
   document.getElementById('planCriteriaInput').value = '';
   document.getElementById('planRevisionReasonGroup').style.display = 'none';
   document.getElementById('planRevisionReasonInput').value = '';
+  const repGroup = document.getElementById('planReplicateTodosGroup');
+  if (repGroup) repGroup.style.display = 'none';
+  const sourceInput = document.getElementById('planSourcePlanIdInput');
+  if (sourceInput) sourceInput.value = '';
   modalManager.open('planModal');
 }
 
@@ -1071,6 +1249,10 @@ function openEditPlanModal(planId) {
   document.getElementById('planCriteriaInput').value = plan.success_criteria || '';
   document.getElementById('planRevisionReasonGroup').style.display = 'block';
   document.getElementById('planRevisionReasonInput').value = '';
+  const repGroup = document.getElementById('planReplicateTodosGroup');
+  if (repGroup) repGroup.style.display = 'none';
+  const sourceInput = document.getElementById('planSourcePlanIdInput');
+  if (sourceInput) sourceInput.value = '';
   modalManager.open('planModal');
 }
 
@@ -1150,8 +1332,15 @@ function openExecLoggerModal(todoId) {
   const todo = appState.getState().todos.find(t => t.id === todoId);
   if (!todo) return;
 
+  const logs = appState.getState().do_logs.filter(l => String(l.todo_id) === String(todo.id));
+  const existingActualMinutes = logs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
+
   document.getElementById('execTodoId').value = todo.id;
-  document.getElementById('execTodoSummary').textContent = `${todo.title} (${i18n.t('estimatedLabel')} ${todo.estimated_minutes || 0}${i18n.t('minutesUnit')})`;
+  
+  const summaryText = existingActualMinutes > 0
+    ? `${todo.title} (${i18n.t('estimatedLabel')} ${todo.estimated_minutes || 0}${i18n.t('minutesUnit')} | ${i18n.t('actualLabel')} ${existingActualMinutes}${i18n.t('minutesUnit')})`
+    : `${todo.title} (${i18n.t('estimatedLabel')} ${todo.estimated_minutes || 0}${i18n.t('minutesUnit')})`;
+  document.getElementById('execTodoSummary').textContent = summaryText;
   
   const now = new Date();
   const toLocalInput = (d) => {
@@ -1159,13 +1348,18 @@ function openExecLoggerModal(todoId) {
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
-  const estMinutes = Number(todo.estimated_minutes) || 30;
-  const startTime = new Date(now.getTime() - (estMinutes * 60000));
+  // 기존에 기록된 실제 소요 시간이 있으면 그 값을 기본값으로, 없으면 예상 소요 시간을 기본값으로 설정
+  const initialMinutes = existingActualMinutes > 0 ? existingActualMinutes : (Number(todo.estimated_minutes) || 30);
+  timerState.baseMinutes = initialMinutes;
+
+  const startTime = new Date(now.getTime() - (initialMinutes * 60000));
 
   document.getElementById('execStartInput').value = toLocalInput(startTime);
   document.getElementById('execEndInput').value = toLocalInput(now);
-  document.getElementById('execMinutesInput').value = estMinutes;
-  document.getElementById('execBlockerInput').value = '';
+  document.getElementById('execMinutesInput').value = initialMinutes;
+  
+  const lastBlocker = logs.length > 0 ? (logs[logs.length - 1].blocked_reason || '') : '';
+  document.getElementById('execBlockerInput').value = lastBlocker;
 
   resetTimer();
   modalManager.open('execModal');
@@ -1188,7 +1382,7 @@ function advanceFeedbackLoopToNextPlan() {
   const currentPlan = state.plans.find(p => p.id === state.selectedPlanId);
   const metrics = appState.getKSTMetrics();
 
-  document.getElementById('planModalTitle').textContent = i18n.getLang() === 'ko' ? '다음 계획에 개선 사항 반영하기' : 'Advance Feedback into Next Plan';
+  document.getElementById('planModalTitle').textContent = i18n.getLang() === 'ko' ? '피드백 개선 계획' : 'Advance Feedback Plan';
   document.getElementById('planFormId').value = '';
   
   // Title with [RE] prefix
@@ -1199,21 +1393,36 @@ function advanceFeedbackLoopToNextPlan() {
   document.getElementById('planEndInput').value = getKSTToday();
   setPriorityPill('planPriorityPills', 'planPriorityInput', currentPlan ? currentPlan.priority : 'high');
   
-  const adjustedMin = metrics.totalActualMin || 60;
+  const sourceTodos = currentPlan ? state.todos.filter(t => String(t.plan_id) === String(currentPlan.id)) : [];
+  const totalTodosMin = sourceTodos.reduce((sum, t) => sum + (Number(t.estimated_minutes) || 0), 0);
+  const previousPlanMin = currentPlan ? (Number(currentPlan.estimated_hours) || 60) : 60;
+  const adjustedMin = Math.max(totalTodosMin, metrics.totalActualMin || 0, previousPlanMin);
   document.getElementById('planHoursInput').value = adjustedMin;
 
   const autoInsight = `${i18n.getLang() === 'ko' ? '이전 주기 피드백 기반 자동 조정' : 'Adjusted based on previous cycle'} (${i18n.t('metricPlanned')}: ${metrics.plannedCount}, ${i18n.t('metricCompleted')}: ${metrics.completedCount}, ${i18n.t('metricDelayed')}: ${metrics.delayedCount}, ${i18n.t('metricTimeDelta')}: ${metrics.timeDeltaMinutes}${i18n.t('minutesUnit')})`;
   document.getElementById('planCriteriaInput').value = autoInsight;
   document.getElementById('planRevisionReasonGroup').style.display = 'none';
 
+  const repGroup = document.getElementById('planReplicateTodosGroup');
+  if (repGroup) repGroup.style.display = 'block';
+  const repCheck = document.getElementById('planReplicateTodosCheckbox');
+  if (repCheck) repCheck.checked = true;
+  const sourceInput = document.getElementById('planSourcePlanIdInput');
+  if (sourceInput) sourceInput.value = currentPlan ? currentPlan.id : '';
+
   modalManager.open('planModal');
-  showToast(i18n.getLang() === 'ko' ? '이전 주기 개선점이 새 계획에 반영되었습니다.' : 'Feedback insights populated into next plan draft.', 'info');
 }
 
 // --- BACKGROUND DRIFT-CORRECTED TIMER ---
 function startTimer() {
   if (timerState.isRunning) return;
   timerState.isRunning = true;
+  
+  const currentInputMins = parseInt(document.getElementById('execMinutesInput').value, 10);
+  if (!isNaN(currentInputMins) && currentInputMins >= 0) {
+    timerState.baseMinutes = currentInputMins;
+  }
+  
   timerState.startEpoch = Date.now() - (timerState.elapsedSeconds * 1000);
   
   document.getElementById('execTimerStartBtn').disabled = true;
@@ -1233,14 +1442,37 @@ function stopTimer() {
   document.getElementById('execTimerStartBtn').disabled = false;
   document.getElementById('execTimerStopBtn').disabled = true;
 
-  const mins = Math.max(1, Math.round(timerState.elapsedSeconds / 60));
-  document.getElementById('execMinutesInput').value = mins;
+  const measuredMins = Math.max(1, Math.round(timerState.elapsedSeconds / 60));
+  const baseMins = Number(timerState.baseMinutes) || 0;
+  
+  // 기존 소요 시간에 타이머 측정 시간을 누적
+  const totalMins = baseMins + measuredMins;
+  document.getElementById('execMinutesInput').value = totalMins;
+
+  // 종료 시간 및 시작 시간도 누적 시간에 맞춰 자동 갱신
+  const now = new Date();
+  const startTime = new Date(now.getTime() - (totalMins * 60000));
+  const toLocalInput = (d) => {
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  document.getElementById('execStartInput').value = toLocalInput(startTime);
+  document.getElementById('execEndInput').value = toLocalInput(now);
 }
 
 function resetTimer() {
-  stopTimer();
+  if (timerState.isRunning) {
+    timerState.isRunning = false;
+    clearInterval(timerState.intervalId);
+    document.getElementById('execTimerStartBtn').disabled = false;
+    document.getElementById('execTimerStopBtn').disabled = true;
+  }
   timerState.elapsedSeconds = 0;
   updateTimerDisplay();
+  const baseMins = Number(timerState.baseMinutes) || 0;
+  if (baseMins > 0) {
+    document.getElementById('execMinutesInput').value = baseMins;
+  }
 }
 
 function updateTimerDisplay() {

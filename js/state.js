@@ -10,9 +10,10 @@ import { getKSTToday, isDelayedKST } from './dateUtils.js';
 class StateStore {
   constructor() {
     this.listeners = new Set();
+    const savedTheme = typeof localStorage !== 'undefined' ? localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME) : null;
     this.state = {
       scope: API.getScope(),
-      theme: localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME) || CONFIG.DEFAULT_THEME,
+      theme: savedTheme || CONFIG.DEFAULT_THEME,
       plans: [],
       plan_histories: [],
       todos: [],
@@ -20,6 +21,7 @@ class StateStore {
       see_reviews: [],
       selectedPlanId: null,
       filters: {
+        planId: '', // '' = all plans, or specific planId
         search: '',
         priority: 'all',
         tags: [], // Multi-tag array support
@@ -87,6 +89,8 @@ class StateStore {
     this.state.do_logs = [];
     this.state.see_reviews = [];
     this.state.selectedPlanId = null;
+    this.state.filters.planId = '';
+    this.state.filters.search = '';
     this.state.scope = newScope;
     API.setScope(newScope);
     this.notify();
@@ -96,8 +100,12 @@ class StateStore {
 
   setTheme(newTheme) {
     this.state.theme = newTheme;
-    localStorage.setItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME, newTheme);
-    document.documentElement.setAttribute('data-theme', newTheme);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME, newTheme);
+    }
+    if (typeof document !== 'undefined' && document.documentElement) {
+      document.documentElement.setAttribute('data-theme', newTheme);
+    }
     this.notify();
   }
 
@@ -160,7 +168,17 @@ class StateStore {
     const activeTodos = this.state.todos.filter(t => !planId || t.plan_id === planId);
     const plannedCount = activeTodos.length;
     const completedCount = activeTodos.filter(t => t.is_completed).length;
-    const delayedCount = activeTodos.filter(t => isDelayedKST(t.due_date, t.is_completed)).length;
+
+    let delayedCount = 0;
+    for (const todo of activeTodos) {
+      const isDateDelayed = isDelayedKST(todo.due_date, todo.is_completed);
+      const todoLogs = this.state.do_logs.filter(l => String(l.todo_id) === String(todo.id));
+      const actualMin = todoLogs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
+      const isTimeOverrun = actualMin > (parseInt(todo.estimated_minutes, 10) || 0);
+      if (isDateDelayed || isTimeOverrun) {
+        delayedCount++;
+      }
+    }
 
     const blockedTodoIds = new Set();
     for (const log of this.state.do_logs) {
@@ -201,7 +219,11 @@ class StateStore {
 
   getFilteredPlans() {
     let list = this.state.plans;
-    const { search, priority } = this.state.filters;
+    const { search, priority, planId } = this.state.filters;
+
+    if (planId && planId !== '' && planId !== 'all') {
+      list = list.filter(p => String(p.id) === String(planId));
+    }
 
     if (search && search.trim() !== '') {
       const q = search.trim().toLowerCase();
@@ -262,7 +284,13 @@ class StateStore {
     } else if (status === 'in_progress') {
       list = list.filter(t => !t.is_completed);
     } else if (status === 'delayed') {
-      list = list.filter(t => isDelayedKST(t.due_date, t.is_completed));
+      list = list.filter(t => {
+        const isDateDelayed = isDelayedKST(t.due_date, t.is_completed);
+        const todoLogs = this.state.do_logs.filter(l => String(l.todo_id) === String(t.id));
+        const actualMin = todoLogs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
+        const isTimeOverrun = actualMin > (parseInt(t.estimated_minutes, 10) || 0);
+        return isDateDelayed || isTimeOverrun;
+      });
     }
 
     const priorityWeights = { urgent: 4, high: 3, medium: 2, low: 1 };

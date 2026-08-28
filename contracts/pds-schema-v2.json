@@ -2,20 +2,82 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "contractName": "Plan-Do-See Diary Contract Schema v2",
   "version": "2.0.0",
-  "description": "Formal contract definition for Plan-Do-See Diary data entities, relational constraints, server-side isolation, and idempotency guarantees.",
+  "description": "Formal contract definition for Plan-Do-See Diary: tables, fields, relational foreign keys, composite constraints, persona scope isolation, KST date rules, and legacy migration mappings.",
   "isolation": {
     "strategy": "server_side_rls_and_session_header",
     "personas": ["scope_a", "scope_b"],
     "headerKey": "x-persona-scope",
     "defaultScope": "scope_a",
     "crossScopeRejectionCode": 403,
-    "tamperingPolicy": "ignore_and_enforce_session_scope"
+    "tamperingPolicy": "ignore_and_enforce_session_scope",
+    "purgePolicy": "scoped_purge_with_cross_scope_preservation"
   },
   "timezone": {
     "canonicalZone": "Asia/Seoul",
     "utcOffset": "+09:00",
     "weekStartDay": "Monday",
-    "monthBoundaryPolicy": "first_day_00_00_00_kst"
+    "weekEndDay": "Sunday",
+    "monthBoundaryPolicy": "first_day_00_00_00_kst_to_last_day_23_59_59_kst",
+    "leapYearRules": {
+      "leapYearFebDays": 29,
+      "nonLeapYearFebDays": 28
+    },
+    "delayEvaluationRule": "not_completed_and_due_date_less_than_today_kst"
+  },
+  "constraints": {
+    "durationRules": {
+      "minDuration": 1,
+      "unit": "minutes",
+      "zeroMinutesAllowed": false,
+      "negativeDurationAllowed": false,
+      "planChildBudgetCeiling": "sum_of_child_todos_estimated_minutes_must_not_exceed_plan_budget",
+      "planReductionFloor": "plan_budget_cannot_be_reduced_below_sum_of_child_todos"
+    },
+    "dateRules": {
+      "todoDueDateBoundary": "todo_due_date_must_not_exceed_parent_plan_period_end",
+      "planDateOrder": "period_end_must_be_greater_or_equal_to_period_start"
+    },
+    "metricsRules": {
+      "planned_count": "total_todos_count_in_plan",
+      "completed_count": "completed_todos_count_in_plan",
+      "delayed_count": "uncompleted_todos_with_due_date_before_today_kst",
+      "blocked_count": "count_of_unique_todos_with_non_empty_blocked_reason",
+      "time_delta_minutes": "total_actual_minutes_minus_total_estimated_minutes"
+    },
+    "encryptionRules": {
+      "algorithm": "AES-256-GCM_or_pgcrypto_pgp_sym_encrypt",
+      "armoredPrefix": "enc:v1:",
+      "fieldsEncryptedAtRest": [
+        "plans.success_criteria",
+        "plan_histories.success_criteria",
+        "todos.description",
+        "do_logs.blocked_reason",
+        "see_reviews.adjustment_insight"
+      ],
+      "hardcodedKeyCount": 0
+    }
+  },
+  "migrationRules": {
+    "supportedSourceVersions": ["1.0.0", "legacy_flat_array"],
+    "maxFileSizeBytes": 5242880,
+    "fieldMappings": {
+      "plan_title": "title",
+      "start_date": "period_start",
+      "end_date": "period_end",
+      "criteria": "success_criteria",
+      "estimated_minutes": "estimated_hours",
+      "task_name": "title",
+      "deadline": "due_date",
+      "est_minutes": "estimated_minutes",
+      "completed": "is_completed",
+      "duration_minutes": "actual_minutes",
+      "start_time": "execution_start",
+      "end_time": "execution_end",
+      "blocker": "blocked_reason",
+      "block_reason": "blocked_reason"
+    },
+    "duplicatePrimaryKeyPolicy": "atomic_rejection_and_rollback",
+    "idempotentUpsertKey": "id"
   },
   "tables": {
     "plans": {
@@ -27,8 +89,8 @@
         "period_start": { "type": "string", "format": "date", "description": "KST start date (YYYY-MM-DD)" },
         "period_end": { "type": "string", "format": "date", "description": "KST end date (YYYY-MM-DD)" },
         "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
-        "success_criteria": { "type": "string", "description": "Definition of done / measurable criteria" },
-        "estimated_hours": { "type": "number", "minimum": 0, "description": "Total estimated hours for plan execution" },
+        "success_criteria": { "type": "string", "description": "Encrypted definition of done / measurable criteria" },
+        "estimated_hours": { "type": "number", "minimum": 1, "description": "Total estimated duration for plan execution (in minutes)" },
         "status": { "type": "string", "enum": ["draft", "active", "completed", "archived"] },
         "created_at": { "type": "string", "format": "date-time" },
         "updated_at": { "type": "string", "format": "date-time" }
@@ -63,11 +125,11 @@
         "plan_id": { "type": "string", "format": "uuid" },
         "scope": { "type": "string", "enum": ["scope_a", "scope_b"] },
         "title": { "type": "string", "maxLength": 255 },
-        "description": { "type": "string" },
-        "due_date": { "type": "string", "format": "date", "description": "KST due date cutoff" },
+        "description": { "type": "string", "description": "Encrypted task detail" },
+        "due_date": { "type": "string", "format": "date", "description": "KST due date cutoff (must be <= plan.period_end)" },
         "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
         "tags": { "type": "array", "items": { "type": "string" } },
-        "estimated_minutes": { "type": "integer", "minimum": 0 },
+        "estimated_minutes": { "type": "integer", "minimum": 1, "description": "Estimated minutes for task execution" },
         "is_completed": { "type": "boolean" },
         "completed_at": { "type": "string", "format": "date-time", "nullable": true },
         "sort_order": { "type": "integer" },
@@ -86,8 +148,8 @@
         "scope": { "type": "string", "enum": ["scope_a", "scope_b"] },
         "execution_start": { "type": "string", "format": "date-time" },
         "execution_end": { "type": "string", "format": "date-time" },
-        "actual_minutes": { "type": "integer", "minimum": 0 },
-        "blocked_reason": { "type": "string", "description": "막힌 이유 (obstacle/blocker note)" },
+        "actual_minutes": { "type": "integer", "minimum": 1, "description": "Actual execution duration in minutes" },
+        "blocked_reason": { "type": "string", "description": "Encrypted obstacle / blocker reason note" },
         "completion_token": { "type": "string", "description": "Idempotency deduplication token" },
         "created_at": { "type": "string", "format": "date-time" }
       },
@@ -105,8 +167,8 @@
         "completed_count": { "type": "integer", "minimum": 0 },
         "delayed_count": { "type": "integer", "minimum": 0 },
         "blocked_count": { "type": "integer", "minimum": 0 },
-        "time_delta_minutes": { "type": "integer" },
-        "adjustment_insight": { "type": "string" },
+        "time_delta_minutes": { "type": "integer", "description": "Total actual minutes minus total estimated minutes" },
+        "adjustment_insight": { "type": "string", "description": "Encrypted reflection and feedback insight" },
         "feedback_applied": { "type": "boolean" },
         "created_at": { "type": "string", "format": "date-time" }
       },
