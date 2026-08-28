@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="pastel-pink">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
+  <title>Plan-Do-See Diary</title>
+  <!-- Dynamic SVG Favicon synchronized with active theme -->
+  <link id="dynamicFavicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23e07a99'/%3E%3Cpath d='M8 10h16M8 16h16M8 22h10' stroke='%23ffffff' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/themes.css">
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <a href="#" class="app-brand">
+          <span class="app-brand-icon" id="appBrandIcon">P</span>
+          <span id="appBrandText">Plan-Do-See Diary</span>
+        </a>
+
+        <!-- Scope Persona Selector (Zero-Login A/B Isolation) -->
+        <div class="scope-toggle-group" id="scopeToggleGroup" role="group" aria-label="Scope Persona Selector">
+          <button type="button" class="scope-btn active" data-scope="scope_a" id="scopeABtn">
+            <span>Scope A</span>
+          </button>
+          <button type="button" class="scope-btn" data-scope="scope_b" id="scopeBBtn">
+            <span>Scope B</span>
+          </button>
+        </div>
+
+        <!-- Language Switcher (Default: 한국어) -->
+        <div class="lang-toggle-group" id="langToggleGroup" role="group" aria-label="Language Selector">
+          <button type="button" class="lang-btn active" data-lang="ko" id="langKoBtn">한국어</button>
+          <button type="button" class="lang-btn" data-lang="en" id="langEnBtn">English</button>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <!-- Visual Theme Icon Selector -->
+        <div class="theme-selector" id="themeSelector" role="group" aria-label="Theme Selector">
+          <button type="button" class="theme-color-btn pink active" data-theme="pastel-pink" id="themePinkBtn" title="핑크 / Pastel Pink" aria-label="Pastel Pink Theme"></button>
+          <button type="button" class="theme-color-btn forest" data-theme="forest-green" id="themeForestBtn" title="포레스트 / Forest Green" aria-label="Forest Green Theme"></button>
+          <button type="button" class="theme-color-btn dark" data-theme="modern-black" id="themeDarkBtn" title="다크 / Modern Black" aria-label="Modern Black Theme"></button>
+        </div>
+
+        <!-- Global Action Buttons -->
+        <button type="button" class="btn btn-secondary btn-sm" id="exportBtn">내보내기</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="importBtn">가져오기</button>
+        <button type="button" class="btn btn-danger btn-sm" id="resetScopeBtn">데이터 초기화</button>
+        <button type="button" class="btn btn-primary btn-sm" id="headerNewPlanBtn">
+          <span id="headerNewPlanText">+ 새 계획</span> <kbd style="font-size: 0.65rem; background: rgba(0,0,0,0.15); padding: 1px 4px; border-radius: 3px;">N</kbd>
+        </button>
+      </div>
+    </header>
+
+    <!-- Filter & Control Bar -->
+    <div class="board-filter-bar">
+      <div class="filter-group">
+        <select id="planSelectFilter" class="select-field" style="max-width: 220px; font-weight: 600;">
+          <option value="">전체 계획</option>
+        </select>
+
+        <div class="search-input-wrap">
+          <input type="text" id="searchInput" class="input-field" placeholder="계획, 할 일, 태그 검색" style="width: 200px;">
+        </div>
+
+        <select id="priorityFilter" class="select-field">
+          <option value="all">전체 우선순위</option>
+          <option value="urgent">긴급</option>
+          <option value="high">높음</option>
+          <option value="medium">보통</option>
+          <option value="low">낮음</option>
+        </select>
+
+        <select id="statusFilter" class="select-field">
+          <option value="all">전체 상태</option>
+          <option value="in_progress">진행 중</option>
+          <option value="completed">완료됨</option>
+          <option value="delayed">지연됨</option>
+        </select>
+
+        <select id="sortSelect" class="select-field">
+          <option value="order_asc">기본 순서</option>
+          <option value="due_asc">마감일 순</option>
+          <option value="priority_desc">우선순위 순</option>
+          <option value="created_desc">최신 등록 순</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <span class="kst-badge" id="kstLiveClock">2026-08-28 00:00:00 KST</span>
+      </div>
+    </div>
+
+    <!-- Main Kanban Board -->
+    <main class="main-board-container" id="mainBoard">
+      <div class="kanban-board">
+        <!-- 1. PLAN COLUMN -->
+        <section class="kanban-col col-plan mobile-active" id="planCol" data-col="plan">
+          <div class="col-header">
+            <div class="col-title-wrap">
+              <div class="col-title">1. Plan</div>
+              <span class="col-count-badge" id="planColCount">0</span>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="colAddPlanBtn">+ 계획 추가</button>
+          </div>
+          <div class="col-body" id="planColBody">
+            <!-- Plan cards rendered dynamically -->
+          </div>
+        </section>
+
+        <!-- 2. DO COLUMN -->
+        <section class="kanban-col col-do" id="doCol" data-col="do">
+          <div class="col-header">
+            <div class="col-title-wrap">
+              <div class="col-title">2. Do</div>
+              <span class="col-count-badge" id="doColCount">0</span>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="colAddTodoBtn">+ 할 일 추가</button>
+          </div>
+          <div class="col-body" id="doColBody">
+            <!-- To Do cards rendered dynamically -->
+          </div>
+        </section>
+
+        <!-- 3. SEE COLUMN -->
+        <section class="kanban-col col-see" id="seeCol" data-col="see">
+          <div class="col-header">
+            <div class="col-title-wrap">
+              <div class="col-title">3. See</div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="colReflectBtn">회고 작성</button>
+          </div>
+          <div class="col-body" id="seeColBody">
+            <!-- Analytics and reflection loops rendered dynamically -->
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Mobile Bottom Navigation (Segmented Switcher) -->
+    <nav class="mobile-bottom-nav" id="mobileBottomNav" aria-label="Mobile Board Navigation">
+      <button type="button" class="mobile-nav-btn active" data-tab="plan" id="navTabPlan">
+        <span>1. Plan</span>
+      </button>
+      <button type="button" class="mobile-nav-btn" data-tab="do" id="navTabDo">
+        <span>2. Do</span>
+      </button>
+      <button type="button" class="mobile-nav-btn" data-tab="see" id="navTabSee">
+        <span>3. See</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- 1. Plan Form Modal -->
+  <div class="modal-backdrop" id="planModal" role="dialog" aria-modal="true" aria-labelledby="planModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="planModalTitle">새 계획 작성</h3>
+        <button type="button" class="btn btn-secondary btn-icon" id="planModalCloseBtn">✕</button>
+      </div>
+      <form id="planForm">
+        <input type="hidden" id="planFormId">
+        <input type="hidden" id="planPriorityInput" value="medium">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="planTitleInput" id="modalPlanTitleLabel">계획 목표 / 제목 *</label>
+            <input type="text" id="planTitleInput" class="input-field" placeholder="예: 이번 주 핵심 프로젝트 개발 및 배포" required>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="planStartInput" id="modalPlanStartLabel">시작일 (KST) *</label>
+              <input type="date" id="planStartInput" class="input-field" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="planEndInput" id="modalPlanEndLabel">종료일 (KST) *</label>
+              <input type="date" id="planEndInput" class="input-field" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" id="modalPlanPriorityLabel">우선순위</label>
+            <!-- Visual Priority Segmented Button Group -->
+            <div class="priority-pill-group" id="planPriorityPills">
+              <button type="button" class="priority-pill-btn urgent" data-priority="urgent">긴급</button>
+              <button type="button" class="priority-pill-btn high" data-priority="high">높음</button>
+              <button type="button" class="priority-pill-btn medium active" data-priority="medium">보통</button>
+              <button type="button" class="priority-pill-btn low" data-priority="low">낮음</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="planHoursInput" id="modalPlanHoursLabel">예상 소요 시간</label>
+            <input type="text" inputmode="numeric" id="planHoursInput" class="input-field" placeholder="예: 600">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="planCriteriaInput" id="modalPlanCriteriaLabel">목표 달성 기준</label>
+            <textarea id="planCriteriaInput" class="auto-textarea" placeholder="예: 테스트 커버리지 95% 달성 및 무중단 배포 완료"></textarea>
+          </div>
+
+          <!-- Enlarged Spacious Textarea for Revision Reason -->
+          <div class="form-group" id="planRevisionReasonGroup" style="display: none;">
+            <label class="form-label" for="planRevisionReasonInput" id="modalPlanRevisionReasonLabel">수정 사유</label>
+            <textarea id="planRevisionReasonInput" class="auto-textarea" rows="3" style="min-height: 80px;" placeholder="계획을 변경하는 이유를 입력하세요"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="planModalCancelBtn">취소</button>
+          <button type="submit" class="btn btn-primary" id="planFormSubmitBtn">
+            <span id="planFormSubmitText">계획 저장</span> <kbd style="font-size:0.65rem; opacity:0.8;">Ctrl+Enter</kbd>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. To Do Form Modal -->
+  <div class="modal-backdrop" id="todoModal" role="dialog" aria-modal="true" aria-labelledby="todoModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="todoModalTitle">새 할 일 추가</h3>
+        <button type="button" class="btn btn-secondary btn-icon" id="todoModalCloseBtn">✕</button>
+      </div>
+      <form id="todoForm">
+        <input type="hidden" id="todoFormId">
+        <input type="hidden" id="todoPriorityInput" value="medium">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="todoPlanSelect" id="modalTodoPlanLabel">연결된 계획 *</label>
+            <select id="todoPlanSelect" class="select-field" required></select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="todoTitleInput" id="modalTodoTitleLabel">할 일 제목 *</label>
+            <input type="text" id="todoTitleInput" class="input-field" placeholder="예: 데이터베이스 RLS 보안 정책 검증" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="todoDueDateInput" id="modalTodoDueLabel">마감일 (KST) *</label>
+            <input type="date" id="todoDueDateInput" class="input-field" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" id="modalTodoPriorityLabel">우선순위</label>
+            <!-- Visual Priority Segmented Button Group -->
+            <div class="priority-pill-group" id="todoPriorityPills">
+              <button type="button" class="priority-pill-btn urgent" data-priority="urgent">긴급</button>
+              <button type="button" class="priority-pill-btn high" data-priority="high">높음</button>
+              <button type="button" class="priority-pill-btn medium active" data-priority="medium">보통</button>
+              <button type="button" class="priority-pill-btn low" data-priority="low">낮음</button>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="todoEstimatedMinutesInput" id="modalTodoMinutesLabel">예상 소요 시간</label>
+              <input type="text" inputmode="numeric" id="todoEstimatedMinutesInput" class="input-field" placeholder="예: 60">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="todoTagsInput" id="modalTodoTagsLabel">태그 (쉼표로 구분)</label>
+              <input type="text" id="todoTagsInput" class="input-field" placeholder="예: 백엔드, 보안">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="todoDescInput" id="modalTodoDescLabel">상세 설명</label>
+            <textarea id="todoDescInput" class="auto-textarea" placeholder="세부 실행 내용이나 참고 사항을 입력하세요"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="todoModalCancelBtn">취소</button>
+          <button type="submit" class="btn btn-primary" id="todoFormSubmitBtn">
+            <span id="todoFormSubmitText">할 일 저장</span> <kbd style="font-size:0.65rem; opacity:0.8;">Ctrl+Enter</kbd>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. Do Execution Timer & Logger Modal -->
+  <div class="modal-backdrop" id="execModal" role="dialog" aria-modal="true" aria-labelledby="execModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="execModalTitle">Do 시간 기록 및 타이머</h3>
+        <button type="button" class="btn btn-secondary btn-icon" id="execModalCloseBtn">✕</button>
+      </div>
+      <form id="execForm">
+        <input type="hidden" id="execTodoId">
+        <div class="modal-body">
+          <div id="execTodoSummary" style="font-size: 0.9rem; font-weight: 600; padding: 0.5rem; background: var(--color-bg-surface-subtle); border-radius: var(--radius-md);"></div>
+
+          <!-- Live Timer Display with Absolute Timestamp Drift Correction -->
+          <div style="text-align: center; padding: 1rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card);">
+            <div style="font-size: 0.75rem; color: var(--color-text-muted);" id="execLiveTimerLabel">실시간 측정 타이머</div>
+            <div id="execLiveTimerDisplay" style="font-size: 2.2rem; font-weight: 800; font-family: var(--font-mono); margin: 0.25rem 0;">00:00:00</div>
+            <div style="display: flex; justify-content: center; gap: 0.5rem;">
+              <button type="button" class="btn btn-primary btn-sm" id="execTimerStartBtn">타이머 시작</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="execTimerStopBtn" disabled>타이머 정지</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="execTimerResetBtn">초기화</button>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="execStartInput" id="modalExecStartLabel">시작 일시</label>
+              <input type="datetime-local" id="execStartInput" class="input-field">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="execEndInput" id="modalExecEndLabel">종료 일시</label>
+              <input type="datetime-local" id="execEndInput" class="input-field">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="execMinutesInput" id="modalExecMinutesLabel">실제 소요 시간 (분) *</label>
+            <input type="text" inputmode="numeric" id="execMinutesInput" class="input-field" placeholder="예: 45" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="execBlockerInput" id="modalExecBlockerLabel">진행 차단 사유</label>
+            <textarea id="execBlockerInput" class="auto-textarea" placeholder="진행 중 지연되거나 차단된 원인이 있다면 적어주세요"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="execModalCancelBtn">취소</button>
+          <button type="button" class="btn btn-secondary" id="execSaveLogOnlyBtn">기록만 저장</button>
+          <button type="submit" class="btn btn-primary" id="execCompleteAndLogBtn">
+            완료 처리 및 기록 저장
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. Plan Revision History Modal -->
+  <div class="modal-backdrop" id="historyModal" role="dialog" aria-modal="true" aria-labelledby="historyModalPlanTitle">
+    <div class="modal-dialog" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="historyModalPlanTitle">계획 수정 이력</h3>
+        <button type="button" class="btn btn-secondary btn-icon" id="historyModalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="history-list" id="historyModalList"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="historyModalDismissBtn">닫기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. See Review / Reflection Modal -->
+  <div class="modal-backdrop" id="seeModal" role="dialog" aria-modal="true" aria-labelledby="seeModalTitle">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="seeModalTitle">회고 작성</h3>
+        <button type="button" class="btn btn-secondary btn-icon" id="seeModalCloseBtn">✕</button>
+      </div>
+      <form id="seeForm">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="seeReviewDateInput" id="modalSeeDateLabel">회고 평가일 (KST) *</label>
+            <input type="date" id="seeReviewDateInput" class="input-field" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="seeInsightInput" id="modalSeeInsightLabel">개선 인사이트 및 회고 내용 *</label>
+            <textarea id="seeInsightInput" class="auto-textarea" placeholder="예상 시간과 실제 시간의 차이, 겪었던 차단 요소, 다음 계획에서 개선할 점을 분석하세요" required></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="seeModalCancelBtn">취소</button>
+          <button type="submit" class="btn btn-primary" id="seeFormSubmitBtn">회고 저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 6. Dirty Form Confirmation Modal -->
+  <div class="modal-backdrop" id="dirtyConfirmModal" role="dialog" aria-modal="true" style="z-index: 1200;">
+    <div class="modal-dialog" style="max-width: 380px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="dirtyModalTitle">저장되지 않은 변경사항</h3>
+      </div>
+      <div class="modal-body" style="font-size: 0.88rem;" id="dirtyModalBody">
+        입력 중인 변경사항이 있습니다. 취소하고 나가시겠습니까, 아니면 계속 작성하시겠습니까?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="dirtyConfirmKeepBtn">계속 작성</button>
+        <button type="button" class="btn btn-danger" id="dirtyConfirmDiscardBtn">변경사항 취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. Reset Scope Confirmation Modal -->
+  <div class="modal-backdrop" id="resetModal" role="dialog" aria-modal="true" style="z-index: 1200;">
+    <div class="modal-dialog" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3 class="modal-title" id="resetModalTitle">합성 데이터 초기화</h3>
+        <button type="button" class="btn btn-secondary btn-icon" id="resetModalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body" style="font-size: 0.88rem;" id="resetModalBody">
+        현재 활성화된 <strong id="resetTargetScopeLabel">Scope A</strong>의 모든 데이터가 0건으로 초기화됩니다.<br><br>다른 스코프의 데이터는 <strong>100% 안전하게 보존</strong>됩니다.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="resetModalCancelBtn">취소</button>
+        <button type="button" class="btn btn-danger" id="resetModalConfirmBtn">0건으로 완전 초기화</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. Import JSON Modal -->
+  <div class="modal-backdrop" id="importModal" role="dialog" aria-modal="true">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title" id="importModalTitle">JSON 백업 파일 가져오기</h3>
+        <button type="button" class="btn btn-secondary btn-icon" id="importModalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 0.85rem; color: var(--color-text-muted);" id="importModalDesc">
+          유효한 Plan-Do-See 백업 JSON 파일(최대 5MB)을 선택하세요. 이전 버전 스키마(v1) 자동 변환 및 무결성 검증이 지원됩니다.
+        </div>
+        <div class="form-group" style="margin-top: 0.75rem;">
+          <input type="file" id="importFileInput" accept=".json,application/json" class="input-field">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="importModalCancelBtn">취소</button>
+        <button type="button" class="btn btn-primary" id="importModalSubmitBtn">가져오기 및 복원</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <!-- Optional Local Environment Loader (Ignored by Git) -->
+  <script src="env.js" onerror="/* optional local environment */"></script>
+
+  <!-- Application Bootstrap Script -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

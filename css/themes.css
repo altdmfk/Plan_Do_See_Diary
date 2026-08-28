@@ -1,0 +1,146 @@
+/* ==========================================================================
+   Plan-Do-See Diary Themes: Muted Bright Pastel Pink, Forest Green, Modern Black
+   ========================================================================== */
+
+:root {
+  /* Common typography and sizing */
+  --font-sans: 'Pretendard', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.12);
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+
+  /* Universal Priority Colors (High visual contrast & scanability) */
+  --priority-urgent-bg: #fee2e2;
+  --priority-urgent-text: #b91c1c;
+  --priority-urgent-border: #fca5a5;
+  --priority-urgent-dot: #ef4444;
+
+  --priority-high-bg: #fef3c7;
+  --priority-high-text: #b45309;
+  --priority-high-border: #fcd34d;
+  --priority-high-dot: #f59e0b;
+
+  --priority-medium-bg: #e0f2fe;
+  --priority-medium-text: #0369a1;
+  --priority-medium-border: #bae6fd;
+  --priority-medium-dot: #38bdf8;
+
+  --priority-low-bg: #f3f4f6;
+  --priority-low-text: #4b5563;
+  --priority-low-border: #e5e7eb;
+  --priority-low-dot: #9ca3af;
+}
+
+/* 1. Muted Bright Pastel Pink Theme */
+[data-theme="pastel-pink"] {
+  --color-bg-app: #fcf6f8;
+  --color-bg-surface: #ffffff;
+  --color-bg-surface-subtle: #faedf2;
+  --color-bg-card: #fdf5f8;
+  --color-bg-card-hover: #faecf2;
+  --color-border: #f2d7e0;
+  --color-border-strong: #ebb0c2;
+
+  --color-primary: #e07a99;
+  --color-primary-hover: #cf6283;
+  --color-primary-light: #fcebf0;
+  --color-primary-contrast: #ffffff;
+
+  --color-accent: #e07a99;
+  --color-text-main: #332228;
+  --color-text-muted: #6e5861;
+  --color-text-subtle: #99808b;
+
+  --color-column-plan-bg: #f7eaf0;
+  --color-column-do-bg: #f7eaf0;
+  --color-column-see-bg: #f7eaf0;
+
+  --color-toast-bg: #fdf5f8;
+  --color-toast-border: #f2d7e0;
+  --color-modal-backdrop: rgba(51, 34, 40, 0.45);
+}
+
+/* 2. Forest Green Theme */
+[data-theme="forest-green"] {
+  --color-bg-app: #f2f7f4;
+  --color-bg-surface: #ffffff;
+  --color-bg-surface-subtle: #e7f1eb;
+  --color-bg-card: #eef6f1;
+  --color-bg-card-hover: #e5f1e9;
+  --color-border: #c6dfcf;
+  --color-border-strong: #9ecab0;
+
+  --color-primary: #1b4d3e;
+  --color-primary-hover: #13392e;
+  --color-primary-light: #d6ecdf;
+  --color-primary-contrast: #ffffff;
+
+  --color-accent: #2d6a4f;
+  --color-text-main: #14281e;
+  --color-text-muted: #3d5849;
+  --color-text-subtle: #698374;
+
+  --color-column-plan-bg: #e5f0e8;
+  --color-column-do-bg: #e5f0e8;
+  --color-column-see-bg: #e5f0e8;
+
+  --color-toast-bg: #eef6f1;
+  --color-toast-border: #c6dfcf;
+  --color-modal-backdrop: rgba(20, 40, 30, 0.45);
+}
+
+/* 3. Modern Black / Obsidian Dark Theme */
+[data-theme="modern-black"] {
+  --color-bg-app: #121212;
+  --color-bg-surface: #1e1e1e;
+  --color-bg-surface-subtle: #27272a;
+  --color-bg-card: #1e1e1e;
+  --color-bg-card-hover: #262626;
+  --color-border: #2e2e32;
+  --color-border-strong: #3f3f46;
+
+  --color-primary: #38bdf8;
+  --color-primary-hover: #0ea5e9;
+  --color-primary-light: #082f49;
+  --color-primary-contrast: #0f172a;
+
+  --color-accent: #38bdf8;
+  --color-text-main: #f4f4f5;
+  --color-text-muted: #a1a1aa;
+  --color-text-subtle: #71717a;
+
+  --color-column-plan-bg: #18181b;
+  --color-column-do-bg: #18181b;
+  --color-column-see-bg: #18181b;
+
+  --color-toast-bg: #1e1e1e;
+  --color-toast-border: #3f3f46;
+  --color-modal-backdrop: rgba(0, 0, 0, 0.75);
+
+  --priority-urgent-bg: #450a0a;
+  --priority-urgent-text: #fca5a5;
+  --priority-urgent-border: #7f1d1d;
+  --priority-urgent-dot: #f87171;
+
+  --priority-high-bg: #451a03;
+  --priority-high-text: #fcd34d;
+  --priority-high-border: #78350f;
+  --priority-high-dot: #fbbf24;
+
+  --priority-medium-bg: #082f49;
+  --priority-medium-text: #7dd3fc;
+  --priority-medium-border: #075985;
+  --priority-medium-dot: #38bdf8;
+
+  --priority-low-bg: #27272a;
+  --priority-low-text: #d4d4d8;
+  --priority-low-border: #3f3f46;
+  --priority-low-dot: #9ca3af;
+}

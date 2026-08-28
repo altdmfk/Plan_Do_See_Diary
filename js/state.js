@@ -1,0 +1,284 @@
+/**
+ * Plan-Do-See Diary - Centralized Reactive State Store (Observer Pattern)
+ * Features Optimistic UI updates, automated error rollback, and memory purge on scope switch.
+ */
+
+import { CONFIG } from './config.js';
+import { API } from './api.js';
+import { getKSTToday, isDelayedKST } from './dateUtils.js';
+
+class StateStore {
+  constructor() {
+    this.listeners = new Set();
+    this.state = {
+      scope: API.getScope(),
+      theme: localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME) || CONFIG.DEFAULT_THEME,
+      plans: [],
+      plan_histories: [],
+      todos: [],
+      do_logs: [],
+      see_reviews: [],
+      selectedPlanId: null,
+      filters: {
+        search: '',
+        priority: 'all',
+        tags: [], // Multi-tag array support
+        status: 'all',
+        sort: 'order_asc' // order_asc, due_asc, priority_desc, created_desc
+      },
+      activeMobileTab: 'plan', // 'plan' | 'do' | 'see'
+      loading: false
+    };
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  notify() {
+    const snapshot = this.getState();
+    for (const listener of this.listeners) {
+      try {
+        listener(snapshot);
+      } catch (err) {
+        console.error('Listener notification error', err);
+      }
+    }
+  }
+
+  getState() {
+    return JSON.parse(JSON.stringify(this.state));
+  }
+
+  async init() {
+    this.state.loading = true;
+    this.notify();
+    try {
+      await this.refreshData();
+    } finally {
+      this.state.loading = false;
+      this.notify();
+    }
+  }
+
+  async refreshData() {
+    const data = await API.fetchAll();
+    this.state.plans = data.plans || [];
+    this.state.plan_histories = data.plan_histories || [];
+    this.state.todos = data.todos || [];
+    this.state.do_logs = data.do_logs || [];
+    this.state.see_reviews = data.see_reviews || [];
+
+    if (!this.state.selectedPlanId && this.state.plans.length > 0) {
+      this.state.selectedPlanId = this.state.plans[0].id;
+    } else if (this.state.plans.length === 0) {
+      this.state.selectedPlanId = null;
+    }
+    this.notify();
+  }
+
+  async switchScope(newScope) {
+    if (newScope === this.state.scope) return;
+    
+    this.state.plans = [];
+    this.state.plan_histories = [];
+    this.state.todos = [];
+    this.state.do_logs = [];
+    this.state.see_reviews = [];
+    this.state.selectedPlanId = null;
+    this.state.scope = newScope;
+    API.setScope(newScope);
+    this.notify();
+
+    await this.init();
+  }
+
+  setTheme(newTheme) {
+    this.state.theme = newTheme;
+    localStorage.setItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME, newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+    this.notify();
+  }
+
+  setSelectedPlan(planId) {
+    this.state.selectedPlanId = planId;
+    this.notify();
+  }
+
+  setFilters(partialFilters) {
+    this.state.filters = { ...this.state.filters, ...partialFilters };
+    this.notify();
+  }
+
+  toggleTagFilter(tag) {
+    const currentTags = [...(this.state.filters.tags || [])];
+    const index = currentTags.indexOf(tag);
+    if (index > -1) {
+      currentTags.splice(index, 1);
+    } else {
+      currentTags.push(tag);
+    }
+    this.setFilters({ tags: currentTags });
+  }
+
+  clearTagFilters() {
+    this.setFilters({ tags: [] });
+  }
+
+  setMobileTab(tab) {
+    if (['plan', 'do', 'see'].includes(tab)) {
+      this.state.activeMobileTab = tab;
+      this.notify();
+    }
+  }
+
+  // --- OPTIMISTIC UI OPERATIONS ---
+
+  async optimisticUpdateTodo(todoId, updates, apiCall) {
+    const previousTodos = JSON.parse(JSON.stringify(this.state.todos));
+    const target = this.state.todos.find(t => t.id === todoId);
+    if (target) {
+      Object.assign(target, updates);
+      this.notify();
+    }
+
+    try {
+      const result = await apiCall();
+      await this.refreshData();
+      return result;
+    } catch (err) {
+      this.state.todos = previousTodos;
+      this.notify();
+      throw err;
+    }
+  }
+
+  // --- KST ANALYTICS CALCULATOR ---
+
+  getKSTMetrics(planId = this.state.selectedPlanId) {
+    const activeTodos = this.state.todos.filter(t => !planId || t.plan_id === planId);
+    const plannedCount = activeTodos.length;
+    const completedCount = activeTodos.filter(t => t.is_completed).length;
+    const delayedCount = activeTodos.filter(t => isDelayedKST(t.due_date, t.is_completed)).length;
+
+    const blockedTodoIds = new Set();
+    for (const log of this.state.do_logs) {
+      if (log.blocked_reason && log.blocked_reason.trim().length > 0) {
+        if (activeTodos.some(t => t.id === log.todo_id)) {
+          blockedTodoIds.add(log.todo_id);
+        }
+      }
+    }
+    const blockedCount = blockedTodoIds.size;
+
+    let totalEstimatedMin = 0;
+    for (const todo of activeTodos) {
+      totalEstimatedMin += (parseInt(todo.estimated_minutes, 10) || 0);
+    }
+
+    let totalActualMin = 0;
+    for (const log of this.state.do_logs) {
+      if (activeTodos.some(t => t.id === log.todo_id)) {
+        totalActualMin += (parseInt(log.actual_minutes, 10) || 0);
+      }
+    }
+
+    const timeDeltaMinutes = totalActualMin - totalEstimatedMin;
+
+    return {
+      plannedCount,
+      completedCount,
+      delayedCount,
+      blockedCount,
+      totalEstimatedMin,
+      totalActualMin,
+      timeDeltaMinutes
+    };
+  }
+
+  // --- GET FILTERED PLANS (Includes plans with matching child To Dos) ---
+
+  getFilteredPlans() {
+    let list = this.state.plans;
+    const { search, priority } = this.state.filters;
+
+    if (search && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      const matchingTodoPlanIds = new Set(
+        this.state.todos
+          .filter(t => 
+            (t.title && t.title.toLowerCase().includes(q)) ||
+            (t.description && t.description.toLowerCase().includes(q)) ||
+            (t.tags && t.tags.some(tg => tg.toLowerCase().includes(q)))
+          )
+          .map(t => t.plan_id)
+      );
+
+      list = list.filter(p => 
+        (p.title && p.title.toLowerCase().includes(q)) ||
+        (p.success_criteria && p.success_criteria.toLowerCase().includes(q)) ||
+        matchingTodoPlanIds.has(p.id)
+      );
+    }
+
+    if (priority && priority !== 'all') {
+      list = list.filter(p => p.priority === priority);
+    }
+
+    return list;
+  }
+
+  // --- GET FILTERED TODOS (Multi-tag filtering support) ---
+
+  getFilteredTodos() {
+    let list = this.state.todos;
+    if (this.state.selectedPlanId) {
+      list = list.filter(t => t.plan_id === this.state.selectedPlanId);
+    }
+
+    const { search, priority, tags, status, sort } = this.state.filters;
+
+    if (search && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      list = list.filter(t => 
+        (t.title && t.title.toLowerCase().includes(q)) ||
+        (t.description && t.description.toLowerCase().includes(q)) ||
+        (t.tags && t.tags.some(tg => tg.toLowerCase().includes(q)))
+      );
+    }
+
+    if (priority && priority !== 'all') {
+      list = list.filter(t => t.priority === priority);
+    }
+
+    // Multi-tag match: matches if todo contains any of the selected tags (or all of them)
+    if (tags && tags.length > 0) {
+      list = list.filter(t => t.tags && tags.every(tg => t.tags.includes(tg)));
+    }
+
+    if (status === 'completed') {
+      list = list.filter(t => t.is_completed);
+    } else if (status === 'in_progress') {
+      list = list.filter(t => !t.is_completed);
+    } else if (status === 'delayed') {
+      list = list.filter(t => isDelayedKST(t.due_date, t.is_completed));
+    }
+
+    const priorityWeights = { urgent: 4, high: 3, medium: 2, low: 1 };
+    list.sort((a, b) => {
+      if (sort === 'due_asc') {
+        return (a.due_date || '').localeCompare(b.due_date || '');
+      } else if (sort === 'priority_desc') {
+        return (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
+      } else if (sort === 'created_desc') {
+        return (b.created_at || '').localeCompare(a.created_at || '');
+      }
+      return (a.sort_order || 0) - (b.sort_order || 0);
+    });
+
+    return list;
+  }
+}
+
+export const appState = new StateStore();

@@ -1,0 +1,20 @@
+{
+  "name": "plan-do-see-diary",
+  "version": "2.0.0",
+  "description": "Plan-Do-See Diary single-page web application using vanilla ES6+ and PostgreSQL with RLS",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "test": "node tests/test-suite.mjs"
+  },
+  "keywords": [
+    "plan-do-see",
+    "vanilla-js",
+    "supabase",
+    "rls",
+    "kanban"
+  ],
+  "author": "",
+  "license": "MIT"
+}
