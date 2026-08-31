@@ -26,7 +26,8 @@ export const CONFIG = {
   STORAGE_KEYS: {
     ACTIVE_SCOPE: 'pds_active_scope',
     ACTIVE_THEME: 'pds_active_theme',
-    DB_STORE_PREFIX: 'pds_db_v2_'
+    DB_STORE_PREFIX: 'pds_db_v2_',
+    AUTH_SESSION: 'pds_auth_session'
   },
   
   // Strict Timezone

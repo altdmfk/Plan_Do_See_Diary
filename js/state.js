@@ -100,6 +100,16 @@ class StateStore {
     await this.init();
   }
 
+  clearAll() {
+    this.state.plans = [];
+    this.state.plan_histories = [];
+    this.state.todos = [];
+    this.state.do_logs = [];
+    this.state.see_reviews = [];
+    this.state.selectedPlanId = null;
+    this.notify();
+  }
+
   setTheme(newTheme) {
     this.state.theme = newTheme;
     if (typeof localStorage !== 'undefined') {

@@ -8,6 +8,7 @@ import { CONFIG } from './config.js';
 import { getKSTToday } from './dateUtils.js';
 import { encryptText, decryptText } from './crypto.js';
 import { sanitizeText, clampNum } from './validators.js';
+import { authClient } from './auth.js';
 
 // Safe localStorage abstraction
 const storage = {
@@ -52,9 +53,10 @@ class SupabaseScopeEngine {
   }
 
   _getCloudHeaders() {
+    const token = authClient.getAccessToken();
     return {
       'apikey': CONFIG.SUPABASE.ANON_KEY,
-      'Authorization': `Bearer ${CONFIG.SUPABASE.ANON_KEY}`,
+      'Authorization': token ? `Bearer ${token}` : `Bearer ${CONFIG.SUPABASE.ANON_KEY}`,
       'Content-Type': 'application/json',
       'Prefer': 'return=representation',
       'x-persona-scope': this.currentScope

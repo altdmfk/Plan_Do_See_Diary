@@ -1017,3 +1017,8 @@ html, body {
     max-width: 100%;
   }
 }
+
+/* Auth Overlay */
+.auth-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--color-bg); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+.auth-overlay[hidden] { display: none; }
+.auth-card { background: var(--color-surface); padding: 2rem; border-radius: var(--radius); box-shadow: var(--shadow-modal); width: 100%; max-width: 400px; }

@@ -1,7 +1,8 @@
 -- Plan-Do-See Diary Database Schema (pds-schema-v2)
 -- Database: PostgreSQL 14+ / Supabase with Row Level Security (RLS) & pgcrypto Server-Side Encryption
 
--- 0. Enable pgcrypto Extension for Server-Side Encryption at Rest
+-- 0. Enable Extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- 1. Create Enums
@@ -25,7 +26,8 @@ END $$;
 
 -- 2. Create Plans Table
 CREATE TABLE IF NOT EXISTS plans (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     scope persona_scope NOT NULL DEFAULT 'scope_a',
     title VARCHAR(255) NOT NULL,
     period_start DATE NOT NULL,
@@ -40,7 +42,8 @@ CREATE TABLE IF NOT EXISTS plans (
 
 -- 3. Create Plan Histories Table (Immutable Snapshot Ledger)
 CREATE TABLE IF NOT EXISTS plan_histories (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
     scope persona_scope NOT NULL DEFAULT 'scope_a',
     revision_number INT NOT NULL DEFAULT 1,
@@ -57,7 +60,8 @@ CREATE TABLE IF NOT EXISTS plan_histories (
 
 -- 4. Create ToDos Table
 CREATE TABLE IF NOT EXISTS todos (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
     scope persona_scope NOT NULL DEFAULT 'scope_a',
     title VARCHAR(255) NOT NULL,
@@ -75,7 +79,8 @@ CREATE TABLE IF NOT EXISTS todos (
 
 -- 5. Create Do Logs Table (Execution Records with Idempotency Token)
 CREATE TABLE IF NOT EXISTS do_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     todo_id UUID NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
     scope persona_scope NOT NULL DEFAULT 'scope_a',
     execution_start TIMESTAMPTZ NOT NULL,
@@ -89,7 +94,8 @@ CREATE TABLE IF NOT EXISTS do_logs (
 
 -- 6. Create See Reviews Table (KST Reflection & Analytics Metrics)
 CREATE TABLE IF NOT EXISTS see_reviews (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
     scope persona_scope NOT NULL DEFAULT 'scope_a',
     review_date DATE NOT NULL,
@@ -104,7 +110,7 @@ CREATE TABLE IF NOT EXISTS see_reviews (
 );
 
 -- Indexes for high-frequency queries
-CREATE INDEX IF NOT EXISTS idx_plans_scope_status ON plans (scope, status);
+CREATE INDEX IF NOT EXISTS idx_plans_user_scope_status ON plans (user_id, scope, status);
 CREATE INDEX IF NOT EXISTS idx_plan_histories_plan ON plan_histories (plan_id, revision_number);
 CREATE INDEX IF NOT EXISTS idx_todos_plan_scope ON todos (plan_id, scope);
 CREATE INDEX IF NOT EXISTS idx_todos_due_completed ON todos (due_date, is_completed);
@@ -155,12 +161,12 @@ BEGIN
     WHERE plan_id = OLD.id;
 
     INSERT INTO plan_histories (
-        plan_id, scope, revision_number, title,
+        user_id, plan_id, scope, revision_number, title,
         period_start, period_end, priority,
         success_criteria, estimated_hours, status,
         reason, changed_at
     ) VALUES (
-        OLD.id, OLD.scope, next_rev, OLD.title,
+        OLD.user_id, OLD.id, OLD.scope, next_rev, OLD.title,
         OLD.period_start, OLD.period_end, OLD.priority,
         OLD.success_criteria, OLD.estimated_hours, OLD.status,
         'Revision before update', now() AT TIME ZONE 'utc'
@@ -179,9 +185,12 @@ CREATE TRIGGER trg_capture_plan_history
     EXECUTE FUNCTION fn_capture_plan_history();
 
 -- 9. Row Level Security (RLS) Configuration & Public API Grants
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
+-- Explicitly revoke access from anon to enforce HTTP 403/404 for unauthenticated requests
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
+
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 
 ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE plan_histories ENABLE ROW LEVEL SECURITY;
@@ -189,35 +198,35 @@ ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE do_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE see_reviews ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS rls_plans_all ON plans;
-CREATE POLICY rls_plans_all ON plans
-    FOR ALL TO anon, authenticated
-    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+DROP POLICY IF EXISTS rls_plans_auth ON plans;
+CREATE POLICY rls_plans_auth ON plans
+    FOR ALL TO authenticated
+    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
-DROP POLICY IF EXISTS rls_plan_histories_all ON plan_histories;
-CREATE POLICY rls_plan_histories_all ON plan_histories
-    FOR ALL TO anon, authenticated
-    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+DROP POLICY IF EXISTS rls_plan_histories_auth ON plan_histories;
+CREATE POLICY rls_plan_histories_auth ON plan_histories
+    FOR ALL TO authenticated
+    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
-DROP POLICY IF EXISTS rls_todos_all ON todos;
-CREATE POLICY rls_todos_all ON todos
-    FOR ALL TO anon, authenticated
-    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+DROP POLICY IF EXISTS rls_todos_auth ON todos;
+CREATE POLICY rls_todos_auth ON todos
+    FOR ALL TO authenticated
+    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
-DROP POLICY IF EXISTS rls_do_logs_all ON do_logs;
-CREATE POLICY rls_do_logs_all ON do_logs
-    FOR ALL TO anon, authenticated
-    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+DROP POLICY IF EXISTS rls_do_logs_auth ON do_logs;
+CREATE POLICY rls_do_logs_auth ON do_logs
+    FOR ALL TO authenticated
+    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
-DROP POLICY IF EXISTS rls_see_reviews_all ON see_reviews;
-CREATE POLICY rls_see_reviews_all ON see_reviews
-    FOR ALL TO anon, authenticated
-    USING (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+DROP POLICY IF EXISTS rls_see_reviews_auth ON see_reviews;
+CREATE POLICY rls_see_reviews_auth ON see_reviews
+    FOR ALL TO authenticated
+    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
+    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
 
 -- 10. Idempotent Todo Completion Function
 CREATE OR REPLACE FUNCTION complete_todo_idempotent(
@@ -232,17 +241,22 @@ CREATE OR REPLACE FUNCTION complete_todo_idempotent(
 DECLARE
     v_todo todos%ROWTYPE;
     v_log do_logs%ROWTYPE;
+    v_uid UUID := auth.uid();
 BEGIN
-    SELECT * INTO v_todo FROM todos WHERE id = p_todo_id AND scope = p_scope;
+    IF v_uid IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
+    END IF;
+
+    SELECT * INTO v_todo FROM todos WHERE id = p_todo_id AND scope = p_scope AND user_id = v_uid;
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Todo not found in current scope' USING ERRCODE = '42501';
+        RAISE EXCEPTION 'Todo not found in current scope or unauthorized' USING ERRCODE = '42501';
     END IF;
 
     INSERT INTO do_logs (
-        todo_id, scope, execution_start, execution_end,
+        user_id, todo_id, scope, execution_start, execution_end,
         actual_minutes, blocked_reason, completion_token
     ) VALUES (
-        p_todo_id, p_scope, p_start, p_end,
+        v_uid, p_todo_id, p_scope, p_start, p_end,
         p_actual_min, pds_encrypt_text(p_blocked, p_scope), p_token
     )
     ON CONFLICT (todo_id, completion_token) DO NOTHING
@@ -252,7 +266,7 @@ BEGIN
     SET is_completed = TRUE,
         completed_at = COALESCE(v_todo.completed_at, p_end),
         updated_at = now() AT TIME ZONE 'utc'
-    WHERE id = p_todo_id AND scope = p_scope;
+    WHERE id = p_todo_id AND scope = p_scope AND user_id = v_uid;
 
     RETURN json_build_object(
         'success', true,
@@ -267,12 +281,17 @@ CREATE OR REPLACE FUNCTION purge_persona_scope(p_scope persona_scope)
 RETURNS json AS $$
 DECLARE
     v_deleted_plans INT;
+    v_uid UUID := auth.uid();
 BEGIN
-    DELETE FROM see_reviews WHERE scope = p_scope;
-    DELETE FROM do_logs WHERE scope = p_scope;
-    DELETE FROM todos WHERE scope = p_scope;
-    DELETE FROM plan_histories WHERE scope = p_scope;
-    DELETE FROM plans WHERE scope = p_scope;
+    IF v_uid IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
+    END IF;
+
+    DELETE FROM see_reviews WHERE scope = p_scope AND user_id = v_uid;
+    DELETE FROM do_logs WHERE scope = p_scope AND user_id = v_uid;
+    DELETE FROM todos WHERE scope = p_scope AND user_id = v_uid;
+    DELETE FROM plan_histories WHERE scope = p_scope AND user_id = v_uid;
+    DELETE FROM plans WHERE scope = p_scope AND user_id = v_uid;
     GET DIAGNOSTICS v_deleted_plans = ROW_COUNT;
 
     RETURN json_build_object(
@@ -282,3 +301,22 @@ BEGIN
     );
 END;
 $$ LANGUAGE plpgsql;
+
+-- 12. Automated Cascading Deletion Trigger (T07-C134)
+CREATE OR REPLACE FUNCTION public.trigger_cascade_user_deletion()
+RETURNS TRIGGER AS $$
+BEGIN
+    DELETE FROM public.see_reviews WHERE user_id = OLD.id;
+    DELETE FROM public.do_logs WHERE user_id = OLD.id;
+    DELETE FROM public.todos WHERE user_id = OLD.id;
+    DELETE FROM public.plan_histories WHERE user_id = OLD.id;
+    DELETE FROM public.plans WHERE user_id = OLD.id;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_cascade_user_deletion ON auth.users;
+CREATE TRIGGER trg_cascade_user_deletion
+    AFTER DELETE ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.trigger_cascade_user_deletion();

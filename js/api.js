@@ -99,5 +99,31 @@ export const API = {
 
     // 5. Commit to database
     return await dbClient.restoreScopeBackup(validated);
+  },
+
+  async migrateLocalData() {
+    const scope = dbClient.getSessionScope();
+    const key = `pds_db_v2_${scope}`;
+    let raw = null;
+    if (typeof localStorage !== 'undefined') {
+      raw = localStorage.getItem(key);
+    }
+    if (!raw) throw new Error('로컬 데이터를 찾을 수 없습니다.');
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      throw new Error('로컬 데이터 파싱 실패.');
+    }
+
+    const migrated = migrateLegacySchema({ ...parsed, scope }, scope);
+    const validated = validateImportPayload(migrated, scope);
+    const result = await dbClient.restoreScopeBackup(validated);
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(key);
+    }
+    return result;
   }
 };

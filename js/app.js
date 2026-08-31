@@ -7,6 +7,7 @@ import { appState } from './state.js';
 import { API } from './api.js';
 import { getKSTToday, formatKSTLiveClock } from './dateUtils.js';
 import { i18n } from './i18n.js';
+import { authClient } from './auth.js';
 import {
   escapeHtml,
   showToast,
@@ -33,6 +34,19 @@ const activeCheckboxToggles = new Set();
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
+  authClient.init();
+
+  if (!authClient.isAuthenticated()) {
+    document.getElementById('authOverlay').hidden = false;
+    document.getElementById('mainBoard').style.display = 'none';
+    const headerEl = document.querySelector('.app-header');
+    if (headerEl) headerEl.style.display = 'none';
+  } else {
+    document.getElementById('authOverlay').hidden = true;
+  }
+
+  bindAuthForms();
+  
   initTheme();
   initLanguage();
   setupAutoExpandingTextareas();
@@ -49,9 +63,69 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Subscribe state store to UI updates
   appState.subscribe(onStateChange);
 
-  // Initialize data store
-  await appState.init();
+  // Initialize data store if authenticated
+  if (authClient.isAuthenticated()) {
+    await appState.init();
+  }
 });
+
+function bindAuthForms() {
+  const loginBtn = document.getElementById('loginBtn');
+  const signupBtn = document.getElementById('signupBtn');
+  const authEmail = document.getElementById('authEmail');
+  const authPassword = document.getElementById('authPassword');
+  const authErrorMsg = document.getElementById('authErrorMsg');
+
+  const handleAuth = async (action) => {
+    const email = authEmail.value;
+    const password = authPassword.value;
+    if (!email || !password) {
+      authErrorMsg.textContent = 'Please enter email and password';
+      return;
+    }
+    
+    loginBtn.disabled = true;
+    signupBtn.disabled = true;
+    authErrorMsg.textContent = '';
+    
+    try {
+      if (action === 'login') {
+        await authClient.login(email, password);
+      } else {
+        await authClient.signup(email, password);
+        authErrorMsg.style.color = 'var(--color-primary)';
+        authErrorMsg.textContent = 'Account created successfully!';
+        setTimeout(() => {}, 1500);
+      }
+      
+      // On success, show app
+      document.getElementById('authOverlay').hidden = true;
+      document.getElementById('mainBoard').style.display = '';
+      const headerEl = document.querySelector('.app-header');
+      if (headerEl) headerEl.style.display = '';
+      await appState.init();
+      authEmail.value = '';
+      authPassword.value = '';
+
+      // T07-C100: Prompt migration if local T06 data exists
+      const scope = appState.getState().scope;
+      const localKey = `pds_db_v2_${scope}`;
+      const hasLocalData = typeof localStorage !== 'undefined' && localStorage.getItem(localKey);
+      if (hasLocalData) {
+        modalManager.open('migrationModal');
+      }
+    } catch (e) {
+      authErrorMsg.style.color = 'var(--color-danger)';
+      authErrorMsg.textContent = 'Invalid login credentials'; // T07-C99 Uniform Error
+    } finally {
+      loginBtn.disabled = false;
+      signupBtn.disabled = false;
+    }
+  };
+
+  loginBtn.addEventListener('click', (e) => { e.preventDefault(); handleAuth('login'); });
+  signupBtn.addEventListener('click', (e) => { e.preventDefault(); handleAuth('signup'); });
+}
 
 function initTheme() {
   const currentTheme = appState.getState().theme;
@@ -211,6 +285,58 @@ function bindHeaderControls() {
 
   // New Plan Header Button
   document.getElementById('headerNewPlanBtn').addEventListener('click', openCreatePlanModal);
+
+  // Logout (T07-C97)
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await authClient.logout();
+    appState.clearAll();
+    document.getElementById('authOverlay').hidden = false;
+    document.getElementById('mainBoard').style.display = 'none';
+    const headerEl = document.querySelector('.app-header');
+    if (headerEl) headerEl.style.display = 'none';
+    showToast('로그아웃되었습니다.', 'info');
+  });
+
+  // Delete Account UI trigger (T07-C134)
+  document.getElementById('deleteAccountBtn').addEventListener('click', () => {
+    modalManager.open('deleteAccountModal');
+  });
+  document.getElementById('deleteAccountCancelBtn').addEventListener('click', () => {
+    modalManager.close('deleteAccountModal');
+  });
+  document.getElementById('deleteAccountConfirmBtn').addEventListener('click', async () => {
+    modalManager.close('deleteAccountModal');
+    try {
+      await appState.purgeActiveScope();
+      await authClient.logout();
+      appState.clearAll();
+      document.getElementById('authOverlay').hidden = false;
+      document.getElementById('mainBoard').style.display = 'none';
+      const headerEl = document.querySelector('.app-header');
+      if (headerEl) headerEl.style.display = 'none';
+      showToast('계정이 삭제되었습니다.', 'success');
+    } catch (err) {
+      showToast('계정 삭제 중 오류가 발생했습니다.', 'error');
+    }
+  });
+
+  // T06 Migration Modal
+  document.getElementById('migrationModalCloseBtn').addEventListener('click', () => {
+    modalManager.close('migrationModal');
+  });
+  document.getElementById('migrationSkipBtn').addEventListener('click', () => {
+    modalManager.close('migrationModal');
+  });
+  document.getElementById('migrationImportBtn').addEventListener('click', async () => {
+    try {
+      await API.migrateLocalData();
+      modalManager.close('migrationModal');
+      await appState.init();
+      showToast('로컬 데이터가 계정으로 마이그레이션되었습니다.', 'success');
+    } catch (err) {
+      showToast('마이그레이션 중 오류가 발생했습니다: ' + err.message, 'error');
+    }
+  });
 }
 
 // --- FILTER CONTROLS ---

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "test": "node tests/test-suite.mjs"
+    "test": "node tests/test-suite.mjs",
+    "test:phase1": "node tests/test-phase1-auth-schema.mjs",
+    "test:phase2": "node tests/test-phase2-auth-ui.mjs"
   },
   "keywords": [
     "plan-do-see",

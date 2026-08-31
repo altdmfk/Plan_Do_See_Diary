@@ -58,7 +58,7 @@ export function migrateLegacySchema(rawPayload, targetScope) {
   }
 
   const payload = JSON.parse(JSON.stringify(rawPayload));
-  const isV1 = !payload.version || payload.version === '1.0.0' || Array.isArray(payload);
+  const isV1 = !payload.version || payload.version === '1.0' || payload.version === '1.0.0' || String(payload.version).startsWith('1.') || Array.isArray(payload);
 
   if (!isV1) {
     return payload;

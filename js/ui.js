@@ -169,6 +169,21 @@ export class ModalManager {
     this.initialSnapshot = null;
   }
 
+  close(modalId, force = false) {
+    const targetId = modalId || (this.activeModal ? this.activeModal.id : null);
+    if (!targetId) return;
+
+    if (force) {
+      this.forceClose(targetId);
+    } else {
+      this.attemptClose(targetId);
+    }
+  }
+
+  hide(modalId, force = false) {
+    this.close(modalId, force);
+  }
+
   showDirtyConfirm(onDiscard) {
     if (typeof document === 'undefined') return;
     const confirmModal = document.getElementById('dirtyConfirmModal');
