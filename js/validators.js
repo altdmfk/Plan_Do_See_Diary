@@ -52,7 +52,7 @@ function isSafeKey(key) {
 /**
  * Migrates legacy schema (v1) to active schema (v2)
  */
-export function migrateLegacySchema(rawPayload, targetScope) {
+export function migrateLegacySchema(rawPayload) {
   if (!rawPayload || typeof rawPayload !== 'object') {
     throw new Error('Import data must be a valid JSON object.');
   }
@@ -68,7 +68,6 @@ export function migrateLegacySchema(rawPayload, targetScope) {
   const migrated = {
     version: '2.0.0',
     exported_at: new Date().toISOString(),
-    scope: targetScope,
     plans: [],
     plan_histories: [],
     todos: [],
@@ -83,7 +82,6 @@ export function migrateLegacySchema(rawPayload, targetScope) {
         if (item.period_start || item.plan_title || item.success_criteria) {
           migrated.plans.push({
             id: item.id || crypto.randomUUID(),
-            scope: targetScope,
             title: sanitizeString(item.title || item.plan_title || 'Migrated Plan', MAX_TITLE_LEN),
             period_start: item.period_start || item.start_date || '2026-01-01',
             period_end: item.period_end || item.end_date || '2026-01-07',
@@ -104,7 +102,6 @@ export function migrateLegacySchema(rawPayload, targetScope) {
       if (p && typeof p === 'object') {
         migrated.plans.push({
           id: p.id || crypto.randomUUID(),
-          scope: targetScope,
           title: sanitizeString(p.title || p.plan_title || 'Migrated Plan', MAX_TITLE_LEN),
           period_start: p.period_start || p.start_date || '2026-01-01',
           period_end: p.period_end || p.end_date || '2026-01-07',
@@ -127,7 +124,6 @@ export function migrateLegacySchema(rawPayload, targetScope) {
         migrated.todos.push({
           id: t.id || crypto.randomUUID(),
           plan_id: t.plan_id || (migrated.plans[0]?.id || crypto.randomUUID()),
-          scope: targetScope,
           title: sanitizeString(t.title || t.task_name || 'Migrated ToDo', MAX_TITLE_LEN),
           description: sanitizeString(t.description || ''),
           due_date: t.due_date || t.deadline || '2026-01-07',
@@ -149,7 +145,6 @@ export function migrateLegacySchema(rawPayload, targetScope) {
         migrated.do_logs.push({
           id: l.id || crypto.randomUUID(),
           todo_id: l.todo_id || (migrated.todos[0]?.id || crypto.randomUUID()),
-          scope: targetScope,
           execution_start: l.execution_start || l.start_time || new Date().toISOString(),
           execution_end: l.execution_end || l.end_time || new Date().toISOString(),
           actual_minutes: clampNumber(l.actual_minutes || l.duration_minutes || 0),
@@ -168,7 +163,7 @@ export function migrateLegacySchema(rawPayload, targetScope) {
  * Validates the entire import data package.
  * Throws a detailed error if any item violates schema rules.
  */
-export function validateImportPayload(payload, activeScope) {
+export function validateImportPayload(payload) {
   if (!payload || typeof payload !== 'object') {
     throw new Error('Import data must be a valid JSON object.');
   }
@@ -210,7 +205,6 @@ export function validateImportPayload(payload, activeScope) {
     p.title = sanitizeString(p.title, MAX_TITLE_LEN);
     p.success_criteria = sanitizeString(p.success_criteria);
     p.estimated_hours = clampNumber(p.estimated_hours);
-    p.scope = activeScope; // Enforce active session scope
   });
 
   // 2. Validate Plan Histories
@@ -221,7 +215,6 @@ export function validateImportPayload(payload, activeScope) {
     h.title = sanitizeString(h.title, MAX_TITLE_LEN);
     h.success_criteria = sanitizeString(h.success_criteria);
     h.reason = sanitizeString(h.reason, 500);
-    h.scope = activeScope;
   });
 
   // 3. Validate ToDos
@@ -235,7 +228,6 @@ export function validateImportPayload(payload, activeScope) {
     t.description = sanitizeString(t.description);
     t.tags = (Array.isArray(t.tags) ? t.tags : []).map(tg => sanitizeString(tg, 50)).filter(Boolean);
     t.estimated_minutes = clampNumber(t.estimated_minutes);
-    t.scope = activeScope;
   });
 
   // 4. Validate Do Logs
@@ -246,7 +238,6 @@ export function validateImportPayload(payload, activeScope) {
     if (!l.execution_start || !l.execution_end) errors.push(`DoLog #${idx + 1}: Missing execution timestamps.`);
     l.blocked_reason = sanitizeString(l.blocked_reason);
     l.actual_minutes = clampNumber(l.actual_minutes);
-    l.scope = activeScope;
   });
 
   // 5. Validate See Reviews
@@ -260,7 +251,6 @@ export function validateImportPayload(payload, activeScope) {
     r.completed_count = clampNumber(r.completed_count);
     r.delayed_count = clampNumber(r.delayed_count);
     r.blocked_count = clampNumber(r.blocked_count);
-    r.scope = activeScope;
   });
 
   if (errors.length > 0) {
@@ -269,7 +259,6 @@ export function validateImportPayload(payload, activeScope) {
 
   return {
     version: '2.0.0',
-    scope: activeScope,
     plans,
     plan_histories: histories,
     todos,

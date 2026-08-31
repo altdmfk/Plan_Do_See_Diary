@@ -1,6 +1,6 @@
 /**
  * Plan-Do-See Diary - Centralized Reactive State Store (Observer Pattern)
- * Features Optimistic UI updates, automated error rollback, and memory purge on scope switch.
+ * Features optimistic UI updates and automated error rollback.
  */
 
 import { CONFIG } from './config.js';
@@ -12,7 +12,6 @@ class StateStore {
     this.listeners = new Set();
     const savedTheme = typeof localStorage !== 'undefined' ? localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME) : null;
     this.state = {
-      scope: API.getScope(),
       theme: savedTheme || CONFIG.DEFAULT_THEME,
       plans: [],
       plan_histories: [],
@@ -80,24 +79,6 @@ class StateStore {
       this.state.selectedPlanId = null;
     }
     this.notify();
-  }
-
-  async switchScope(newScope) {
-    if (newScope === this.state.scope) return;
-    
-    this.state.plans = [];
-    this.state.plan_histories = [];
-    this.state.todos = [];
-    this.state.do_logs = [];
-    this.state.see_reviews = [];
-    this.state.selectedPlanId = null;
-    this.state.filters.planId = '';
-    this.state.filters.search = '';
-    this.state.scope = newScope;
-    API.setScope(newScope);
-    this.notify();
-
-    await this.init();
   }
 
   clearAll() {

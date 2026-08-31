@@ -7,13 +7,6 @@ export const CONFIG = {
   VERSION: '2.0.0',
   SCHEMA_VERSION: 'v2',
   
-  // Personas & Scopes (A/B Test Sessions)
-  SCOPES: {
-    SCOPE_A: 'scope_a',
-    SCOPE_B: 'scope_b'
-  },
-  DEFAULT_SCOPE: 'scope_a',
-  
   // Themes
   THEMES: {
     PASTEL_PINK: 'pastel-pink',
@@ -21,12 +14,13 @@ export const CONFIG = {
     MODERN_BLACK: 'modern-black'
   },
   DEFAULT_THEME: 'pastel-pink',
+
+
   
   // Storage Keys
   STORAGE_KEYS: {
-    ACTIVE_SCOPE: 'pds_active_scope',
     ACTIVE_THEME: 'pds_active_theme',
-    DB_STORE_PREFIX: 'pds_db_v2_',
+    DB_STORE_PREFIX: 'pds_user_cache_v2_',
     AUTH_SESSION: 'pds_auth_session'
   },
   

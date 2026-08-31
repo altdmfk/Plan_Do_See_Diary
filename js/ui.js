@@ -240,6 +240,10 @@ export class ModalManager {
 
 export const modalManager = new ModalManager();
 
+export function openMigrationModal() {
+  modalManager.open('migrationModal');
+}
+
 /**
  * Setup Auto-expanding & Auto-shrinking Textareas
  */
@@ -583,7 +587,7 @@ export function applyLanguageTranslations() {
   // Header & Controls
   document.getElementById('exportBtn').textContent = t('exportBtn');
   document.getElementById('importBtn').textContent = t('importBtn');
-  document.getElementById('resetScopeBtn').textContent = t('resetBtn');
+  document.getElementById('resetDataBtn').textContent = t('resetBtn');
   document.getElementById('headerNewPlanText').textContent = t('newPlanBtn');
 
   // Filter bar
@@ -744,4 +748,17 @@ export function applyLanguageTranslations() {
   setTxt('importModalDesc', t('importModalDesc'));
   setTxt('importModalCancelBtn', t('cancelBtn'));
   setTxt('importModalSubmitBtn', t('importSubmitBtn'));
+}
+
+export function updateThemeButtons(theme) {
+  document.querySelectorAll('.theme-color-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.theme === theme);
+  });
+}
+
+export function updateLanguageButtons(lang) {
+  const koBtn = document.getElementById('langKoBtn');
+  const enBtn = document.getElementById('langEnBtn');
+  if (koBtn) koBtn.classList.toggle('active', lang === 'ko');
+  if (enBtn) enBtn.classList.toggle('active', lang === 'en');
 }

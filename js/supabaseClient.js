@@ -1,5 +1,5 @@
 /**
- * Plan-Do-See Diary - Database Client & Scope Isolation Layer
+ * Plan-Do-See Diary - Database Client & Data Access Layer
  * Connects to Supabase PostgREST API with Row-Level Security (RLS) policies
  * and provides high-fidelity local PostgreSQL engine with automatic at-rest encryption and bounds sanitization.
  */
@@ -16,9 +16,9 @@ const storage = {
   setItem: (k, v) => (typeof localStorage !== 'undefined' ? localStorage.setItem(k, v) : null)
 };
 
-class SupabaseScopeEngine {
+class SupabaseEngine {
   constructor() {
-    this.currentScope = storage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_SCOPE) || CONFIG.DEFAULT_SCOPE;
+    
     this.memoryStore = new Map();
     this.inFlightLocks = new Map();
 
@@ -36,20 +36,14 @@ class SupabaseScopeEngine {
     this.isCloudConfigured = hasUrl && hasKey;
   }
 
-  setSessionScope(scope) {
-    if (scope !== CONFIG.SCOPES.SCOPE_A && scope !== CONFIG.SCOPES.SCOPE_B) {
-      throw new Error(`Invalid scope: ${scope}`);
-    }
-    this.currentScope = scope;
-    storage.setItem(CONFIG.STORAGE_KEYS.ACTIVE_SCOPE, scope);
+  
+
+  _getCurrentUserKey() {
+    return authClient.getUserId() || 'anon';
   }
 
-  getSessionScope() {
-    return this.currentScope;
-  }
-
-  _getStorageKey(scope) {
-    return `${CONFIG.STORAGE_KEYS.DB_STORE_PREFIX}${scope}`;
+  _getStorageKey() {
+    return `${CONFIG.STORAGE_KEYS.DB_STORE_PREFIX}${this._getCurrentUserKey()}`;
   }
 
   _getCloudHeaders() {
@@ -58,16 +52,16 @@ class SupabaseScopeEngine {
       'apikey': CONFIG.SUPABASE.ANON_KEY,
       'Authorization': token ? `Bearer ${token}` : `Bearer ${CONFIG.SUPABASE.ANON_KEY}`,
       'Content-Type': 'application/json',
-      'Prefer': 'return=representation',
-      'x-persona-scope': this.currentScope
+      'Prefer': 'return=representation'
     };
   }
 
-  _loadScopeData(scope) {
-    if (this.memoryStore.has(scope)) {
-      return this.memoryStore.get(scope);
+  _loadData() {
+    const userKey = this._getCurrentUserKey();
+    if (this.memoryStore.has(userKey)) {
+      return this.memoryStore.get(userKey);
     }
-    const raw = storage.getItem(this._getStorageKey(scope));
+    const raw = storage.getItem(this._getStorageKey());
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
@@ -78,46 +72,47 @@ class SupabaseScopeEngine {
           }
           parsed.do_logs = Array.from(logMap.values());
         }
-        this.memoryStore.set(scope, parsed);
+        this.memoryStore.set(userKey, parsed);
         return parsed;
       } catch (e) {
-        console.error('Failed to parse scope store', e);
+        console.error('Failed to parse data store', e);
       }
     }
-    const fresh = CONFIG.ENABLE_SYNTHETIC_SEED !== false
-      ? this._createSeedData(scope)
-      : { scope, plans: [], plan_histories: [], todos: [], do_logs: [], see_reviews: [] };
-    this._saveScopeData(scope, fresh);
+    const fresh = { plans: [], plan_histories: [], todos: [], do_logs: [], see_reviews: [] };
+    this._saveData(fresh);
     return fresh;
   }
 
-  _saveScopeData(scope, data) {
-    this.memoryStore.set(scope, data);
-    storage.setItem(this._getStorageKey(scope), JSON.stringify(data));
+  _saveData(data) {
+    const userKey = this._getCurrentUserKey();
+    this.memoryStore.set(userKey, data);
+    storage.setItem(this._getStorageKey(), JSON.stringify(data));
   }
 
-  _createSeedData(scope) {
+  clearMemoryStore() {
+    this.memoryStore.clear();
+  }
+
+  _createSeedData() {
     const today = getKSTToday();
-    const isScopeA = scope === CONFIG.SCOPES.SCOPE_A;
+    
     const planId = crypto.randomUUID();
     const todoId1 = crypto.randomUUID();
     const todoId2 = crypto.randomUUID();
     const todoId3 = crypto.randomUUID();
 
     return {
-      scope: scope,
+      
       plans: [
         {
           id: planId,
-          scope: scope,
-          title: isScopeA ? '이번 주 건강 관리 및 운동 루틴 실천' : '독서 및 어학 자기계발 습관 만들기',
+          
+          title: '이번 주 건강 관리 및 운동 루틴 실천',
           period_start: today,
           period_end: today,
-          priority: isScopeA ? 'urgent' : 'high',
-          success_criteria: isScopeA 
-            ? '주 4회 운동 완료 및 매일 물 2L 마시기 100% 실천' 
-            : '책 1권 완독 및 하루 20분 영어 팟캐스트 청취',
-          estimated_hours: isScopeA ? 360 : 480,
+          priority: 'urgent',
+          success_criteria: '주 4회 운동 완료 및 매일 물 2L 마시기 100% 실천',
+          estimated_hours: 360,
           status: 'active',
           created_at: new Date(Date.now() - 86400000).toISOString(),
           updated_at: new Date(Date.now() - 86400000).toISOString()
@@ -128,12 +123,12 @@ class SupabaseScopeEngine {
         {
           id: todoId1,
           plan_id: planId,
-          scope: scope,
-          title: isScopeA ? '아침 공복 스트레칭 및 영양제 챙겨먹기' : '출퇴근길에 영어 회화 팟캐스트 1에피소드 듣기',
-          description: isScopeA ? '기상 직후 전신 스트레칭 10분 진행 및 비타민 복용' : '출근길 지하철에서 핵심 표현 3개 메모하기',
+          
+          title: '아침 공복 스트레칭 및 영양제 챙겨먹기',
+          description: '기상 직후 전신 스트레칭 10분 진행 및 비타민 복용',
           due_date: today,
           priority: 'urgent',
-          tags: isScopeA ? ['건강', '루틴'] : ['영어', '어학'],
+          tags: ['건강', '루틴'],
           estimated_minutes: 30,
           is_completed: true,
           completed_at: new Date(Date.now() - 3600000).toISOString(),
@@ -144,12 +139,12 @@ class SupabaseScopeEngine {
         {
           id: todoId2,
           plan_id: planId,
-          scope: scope,
-          title: isScopeA ? '퇴근 후 헬스장에서 런닝머신 40분 뛰기' : '자기 전 침대에서 책 30페이지 읽기',
-          description: isScopeA ? '가벼운 조깅 속도로 심폐 지구력 기르기' : '스마트폰 내려놓고 조용한 환경에서 독서하기',
+          
+          title: '퇴근 후 헬스장에서 런닝머신 40분 뛰기',
+          description: '가벼운 조깅 속도로 심폐 지구력 기르기',
           due_date: today,
           priority: 'high',
-          tags: isScopeA ? ['운동', '헬스'] : ['독서', '자기계발'],
+          tags: ['운동', '헬스'],
           estimated_minutes: 40,
           is_completed: false,
           completed_at: null,
@@ -160,12 +155,12 @@ class SupabaseScopeEngine {
         {
           id: todoId3,
           plan_id: planId,
-          scope: scope,
-          title: isScopeA ? '주말 식단용 신선한 샐러드 및 과일 장보기' : '이번 주 읽은 책의 인상 깊은 문장 독서 노트에 기록',
-          description: isScopeA ? '주말 동안 먹을 건강한 식재료 구매하기' : '좋았던 구절과 느낀 점 3줄 요약',
+          
+          title: '주말 식단용 신선한 샐러드 및 과일 장보기',
+          description: '주말 동안 먹을 건강한 식재료 구매하기',
           due_date: today,
           priority: 'medium',
-          tags: isScopeA ? ['식단', '건강'] : ['독서', '기록'],
+          tags: ['식단', '건강'],
           estimated_minutes: 45,
           is_completed: false,
           completed_at: null,
@@ -178,7 +173,7 @@ class SupabaseScopeEngine {
         {
           id: crypto.randomUUID(),
           todo_id: todoId1,
-          scope: scope,
+          
           execution_start: new Date(Date.now() - 7200000).toISOString(),
           execution_end: new Date(Date.now() - 5400000).toISOString(),
           actual_minutes: 30,
@@ -191,7 +186,7 @@ class SupabaseScopeEngine {
     };
   }
 
-  _mergeScopeData(local, cloud) {
+  _mergeData(local, cloud) {
     const plansMap = new Map((local.plans || []).map(p => [p.id, p]));
     for (const p of (cloud.plans || [])) {
       plansMap.set(p.id, p);
@@ -223,29 +218,36 @@ class SupabaseScopeEngine {
     }
 
     const merged = {
-      scope: local.scope || cloud.scope,
+      
       plans: Array.from(plansMap.values()),
       plan_histories: Array.from(historiesMap.values()),
       todos: Array.from(todosMap.values()),
       do_logs: Array.from(logsByTodo.values()),
       see_reviews: Array.from(reviewsMap.values())
     };
-    this._saveScopeData(merged.scope, merged);
+    this._saveData(merged);
     return merged;
   }
 
-  _assertScope(targetScope) {
-    if (targetScope && targetScope !== this.currentScope) {
-      const error = new Error('Cross-scope operation rejected: HTTP 403 Forbidden by PostgreSQL RLS Policy');
-      error.status = 403;
-      throw error;
-    }
-  }
+  
 
   // --- QUERY & MUTATION INTERFACES (RLS & E2EE Automatic Encryption) ---
 
-  async fetchAll(scope = this.currentScope) {
-    this._assertScope(scope);
+  async _fetch(url, options = {}, retries = 1) {
+    let res = await fetch(url, options);
+    if (!res.ok && res.status === 401 && retries > 0) {
+      let data = {};
+      try { data = await res.clone().json(); } catch(e) {}
+      if (JSON.stringify(data).includes('JWT issued at future') || JSON.stringify(data).includes('PGRST303')) {
+        await new Promise(r => setTimeout(r, 1500));
+        return this._fetch(url, options, 0);
+      }
+    }
+    return res;
+  }
+
+  async fetchAll() {
+    
 
     let rawData;
 
@@ -254,38 +256,32 @@ class SupabaseScopeEngine {
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = this._getCloudHeaders();
         const [plansRes, historiesRes, todosRes, doLogsRes, seeRes] = await Promise.all([
-          fetch(`${url}/plans?scope=eq.${scope}&select=*&order=created_at.desc`, { headers }),
-          fetch(`${url}/plan_histories?scope=eq.${scope}&select=*&order=revision_number.desc`, { headers }),
-          fetch(`${url}/todos?scope=eq.${scope}&select=*&order=sort_order.asc`, { headers }),
-          fetch(`${url}/do_logs?scope=eq.${scope}&select=*`, { headers }),
-          fetch(`${url}/see_reviews?scope=eq.${scope}&select=*&order=created_at.desc`, { headers })
+          this._fetch(`${url}/plans?select=*&order=created_at.desc`, { headers }),
+          this._fetch(`${url}/plan_histories?select=*&order=revision_number.desc`, { headers }),
+          this._fetch(`${url}/todos?select=*&order=sort_order.asc`, { headers }),
+          this._fetch(`${url}/do_logs?select=*`, { headers }),
+          this._fetch(`${url}/see_reviews?select=*&order=created_at.desc`, { headers })
         ]);
 
         if (plansRes.ok && todosRes.ok) {
-          const localData = this._loadScopeData(scope);
-          if (localData && Array.isArray(localData.plans) && localData.plans.length === 0 && Array.isArray(localData.todos) && localData.todos.length === 0) {
-            // Explicitly purged state: return 0 items
-            rawData = JSON.parse(JSON.stringify(localData));
-          } else {
-            const cloudData = {
-              scope,
-              plans: await plansRes.json(),
-              plan_histories: await historiesRes.json(),
-              todos: await todosRes.json(),
-              do_logs: await doLogsRes.json(),
-              see_reviews: await seeRes.json()
-            };
-            rawData = this._mergeScopeData(localData, cloudData);
-          }
+          const cloudData = {
+            plans: await plansRes.json(),
+            plan_histories: await historiesRes.json(),
+            todos: await todosRes.json(),
+            do_logs: await doLogsRes.json(),
+            see_reviews: await seeRes.json()
+          };
+          this._saveData(cloudData);
+          rawData = cloudData;
         } else {
-          rawData = JSON.parse(JSON.stringify(this._loadScopeData(scope)));
+          rawData = JSON.parse(JSON.stringify(this._loadData()));
         }
       } catch (err) {
         console.warn('Supabase cloud fetch failed, falling back to local database engine:', err.message);
-        rawData = JSON.parse(JSON.stringify(this._loadScopeData(scope)));
+        rawData = JSON.parse(JSON.stringify(this._loadData()));
       }
     } else {
-      rawData = JSON.parse(JSON.stringify(this._loadScopeData(scope)));
+      rawData = JSON.parse(JSON.stringify(this._loadData()));
     }
 
     // In-memory transparent decryption for the active session
@@ -306,7 +302,8 @@ class SupabaseScopeEngine {
 
     const decryptedDoLogs = await Promise.all(rawData.do_logs.map(async (l) => ({
       ...l,
-      blocked_reason: await decryptText(l.blocked_reason)
+      blocked_reason: await decryptText(l.blocked_reason),
+        memo: await decryptText(l.memo)
     })));
 
     const decryptedSeeReviews = await Promise.all(rawData.see_reviews.map(async (r) => ({
@@ -315,7 +312,7 @@ class SupabaseScopeEngine {
     })));
 
     return {
-      scope,
+     
       plans: decryptedPlans,
       plan_histories: decryptedHistories,
       todos: decryptedTodos,
@@ -325,7 +322,7 @@ class SupabaseScopeEngine {
   }
 
   async createPlan(planData) {
-    const scope = this.currentScope;
+    
     const cleanTitle = sanitizeText(planData.title, 255);
     const cleanCriteria = sanitizeText(planData.success_criteria);
     const cleanHours = clampNum(planData.estimated_hours);
@@ -333,12 +330,12 @@ class SupabaseScopeEngine {
       throw new Error('목표 예상 시간은 최소 1분 이상이어야 합니다.');
     }
 
-    const signature = `${scope}|plan|${cleanTitle}|${planData.period_start}|${planData.period_end}|${cleanHours}`;
+    const signature = `plan|${cleanTitle}|${planData.period_start}|${planData.period_end}|${cleanHours}`;
     const now = Date.now();
     const lastTime = this.inFlightLocks.get(signature);
     if (lastTime && (now - lastTime) < 1500) {
       if (!this.isCloudConfigured) {
-        const data = this._loadScopeData(scope);
+        const data = this._loadData();
         const existing = data.plans.find(p => p.title === cleanTitle && p.period_start === planData.period_start && p.period_end === planData.period_end);
         if (existing) return existing;
       }
@@ -354,21 +351,21 @@ class SupabaseScopeEngine {
       success_criteria: encryptedCriteria
     };
 
-    const data = this._loadScopeData(scope);
+    const data = this._loadData();
     const newPlan = {
       id: crypto.randomUUID(),
       ...payload,
-      scope: scope,
+      
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
     if (this.isCloudConfigured) {
       try {
-        const res = await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
+        const res = await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify({ ...payload, id: newPlan.id, scope })
+          body: JSON.stringify({ ...payload, id: newPlan.id })
         });
         if (res.ok) {
           const created = await res.json();
@@ -382,12 +379,12 @@ class SupabaseScopeEngine {
     }
 
     data.plans.unshift(newPlan);
-    this._saveScopeData(scope, data);
+    this._saveData(data);
     return { ...newPlan, success_criteria: cleanCriteria };
   }
 
   async updatePlan(planId, updates) {
-    const scope = this.currentScope;
+    
     const cleanTitle = updates.title !== undefined ? sanitizeText(updates.title, 255) : undefined;
     const cleanCriteria = updates.success_criteria !== undefined ? sanitizeText(updates.success_criteria) : undefined;
     const cleanHours = updates.estimated_hours !== undefined ? clampNum(updates.estimated_hours) : undefined;
@@ -407,8 +404,8 @@ class SupabaseScopeEngine {
       updated_at: new Date().toISOString()
     };
 
-    const data = this._loadScopeData(scope);
-    const index = data.plans.findIndex(p => String(p.id) === String(planId) && p.scope === scope);
+    const data = this._loadData();
+    const index = data.plans.findIndex(p => String(p.id) === String(planId) );
     if (index === -1) {
       throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404)');
     }
@@ -424,7 +421,7 @@ class SupabaseScopeEngine {
 
     if (this.isCloudConfigured) {
       try {
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}&scope=eq.${scope}`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
           body: JSON.stringify(payload)
@@ -439,7 +436,7 @@ class SupabaseScopeEngine {
     data.plan_histories.unshift({
       id: crypto.randomUUID(),
       plan_id: oldPlan.id,
-      scope: scope,
+      
       revision_number: revCount + 1,
       title: oldPlan.title,
       period_start: oldPlan.period_start,
@@ -455,20 +452,20 @@ class SupabaseScopeEngine {
     const updated = {
       ...oldPlan,
       ...payload,
-      scope: scope,
+      
       updated_at: new Date().toISOString()
     };
     delete updated.revision_reason;
     data.plans[index] = updated;
-    this._saveScopeData(scope, data);
+    this._saveData(data);
     return { ...updated, success_criteria: cleanCriteria !== undefined ? cleanCriteria : oldPlan.success_criteria };
   }
 
   async deletePlan(planId) {
-    const scope = this.currentScope;
+    
 
-    const data = this._loadScopeData(scope);
-    const planIndex = data.plans.findIndex(p => p.id === planId && p.scope === scope);
+    const data = this._loadData();
+    const planIndex = data.plans.findIndex(p => p.id === planId );
     if (planIndex === -1) {
       const err = new Error('계획을 찾을 수 없거나 삭제 권한이 없습니다. (PostgreSQL RLS 404/403)');
       err.status = 403;
@@ -477,7 +474,7 @@ class SupabaseScopeEngine {
 
     if (this.isCloudConfigured) {
       try {
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}&scope=eq.${scope}`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}`, {
           method: 'DELETE',
           headers: this._getCloudHeaders()
         });
@@ -492,12 +489,12 @@ class SupabaseScopeEngine {
     data.todos = data.todos.filter(t => t.plan_id !== planId);
     data.do_logs = data.do_logs.filter(l => !childTodoIds.has(l.todo_id));
     data.see_reviews = data.see_reviews.filter(r => r.plan_id !== planId);
-    this._saveScopeData(scope, data);
+    this._saveData(data);
     return { success: true };
   }
 
   async createTodo(todoData) {
-    const scope = this.currentScope;
+    
     const cleanTitle = sanitizeText(todoData.title, 255);
     const cleanDesc = sanitizeText(todoData.description);
     const cleanMin = clampNum(todoData.estimated_minutes);
@@ -505,12 +502,12 @@ class SupabaseScopeEngine {
       throw new Error('할 일 예상 소요 시간은 최소 1분 이상이어야 합니다.');
     }
 
-    const signature = `${scope}|todo|${todoData.plan_id}|${cleanTitle}|${todoData.due_date}|${cleanMin}`;
+    const signature = `todo|${todoData.plan_id}|${cleanTitle}|${todoData.due_date}|${cleanMin}`;
     const now = Date.now();
     const lastTime = this.inFlightLocks.get(signature);
     if (lastTime && (now - lastTime) < 1500) {
       if (!this.isCloudConfigured) {
-        const data = this._loadScopeData(scope);
+        const data = this._loadData();
         const existing = data.todos.find(t => t.plan_id === todoData.plan_id && t.title === cleanTitle && t.due_date === todoData.due_date);
         if (existing) return existing;
       }
@@ -528,10 +525,10 @@ class SupabaseScopeEngine {
       tags: cleanTags
     };
 
-    const data = this._loadScopeData(scope);
+    const data = this._loadData();
     const targetPlan = data.plans.find(p => String(p.id) === String(todoData.plan_id));
     if (targetPlan) {
-      if (targetPlan.period_end && todoData.due_date > targetPlan.period_end) {
+      if (targetPlan.period_end && (todoData.due_date > targetPlan.period_end || todoData.due_date < targetPlan.period_start)) {
         throw new Error(`할 일 마감일(${todoData.due_date})은 연결된 계획의 종료일(${targetPlan.period_end})을 초과할 수 없습니다.`);
       }
       if (targetPlan.estimated_hours !== undefined) {
@@ -549,7 +546,7 @@ class SupabaseScopeEngine {
     const newTodo = {
       id: crypto.randomUUID(),
       ...payload,
-      scope: scope,
+      
       is_completed: false,
       completed_at: null,
       created_at: new Date().toISOString(),
@@ -558,10 +555,10 @@ class SupabaseScopeEngine {
 
     if (this.isCloudConfigured) {
       try {
-        const res = await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
+        const res = await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify({ ...payload, id: newTodo.id, scope, is_completed: false })
+          body: JSON.stringify({ ...payload, id: newTodo.id, is_completed: false })
         });
         if (res.ok) {
           const created = await res.json();
@@ -575,12 +572,12 @@ class SupabaseScopeEngine {
     }
 
     data.todos.push(newTodo);
-    this._saveScopeData(scope, data);
+    this._saveData(data);
     return { ...newTodo, description: cleanDesc };
   }
 
   async updateTodo(todoId, updates) {
-    const scope = this.currentScope;
+    
     const cleanTitle = updates.title !== undefined ? sanitizeText(updates.title, 255) : undefined;
     const cleanDesc = updates.description !== undefined ? sanitizeText(updates.description) : undefined;
     const cleanMin = updates.estimated_minutes !== undefined ? clampNum(updates.estimated_minutes) : undefined;
@@ -598,8 +595,8 @@ class SupabaseScopeEngine {
       ...(encryptedDesc !== undefined ? { description: encryptedDesc } : {})
     };
 
-    const data = this._loadScopeData(scope);
-    const index = data.todos.findIndex(t => String(t.id) === String(todoId) && t.scope === scope);
+    const data = this._loadData();
+    const index = data.todos.findIndex(t => String(t.id) === String(todoId) );
     if (index === -1) {
       throw new Error('할 일을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404)');
     }
@@ -620,7 +617,7 @@ class SupabaseScopeEngine {
 
     if (this.isCloudConfigured) {
       try {
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}&scope=eq.${scope}`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
           body: JSON.stringify(payload)
@@ -633,19 +630,19 @@ class SupabaseScopeEngine {
     const updated = {
       ...data.todos[index],
       ...payload,
-      scope: scope,
+      
       updated_at: new Date().toISOString()
     };
     data.todos[index] = updated;
-    this._saveScopeData(scope, data);
+    this._saveData(data);
     return { ...updated, description: cleanDesc !== undefined ? cleanDesc : data.todos[index].description };
   }
 
   async deleteTodo(todoId) {
-    const scope = this.currentScope;
+    
 
-    const data = this._loadScopeData(scope);
-    const todoIndex = data.todos.findIndex(t => t.id === todoId && t.scope === scope);
+    const data = this._loadData();
+    const todoIndex = data.todos.findIndex(t => t.id === todoId );
     if (todoIndex === -1) {
       const err = new Error('할 일을 찾을 수 없거나 삭제 권한이 없습니다. (PostgreSQL RLS 404/403)');
       err.status = 403;
@@ -654,7 +651,7 @@ class SupabaseScopeEngine {
 
     if (this.isCloudConfigured) {
       try {
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}&scope=eq.${scope}`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}`, {
           method: 'DELETE',
           headers: this._getCloudHeaders()
         });
@@ -665,13 +662,13 @@ class SupabaseScopeEngine {
 
     data.todos.splice(todoIndex, 1);
     data.do_logs = data.do_logs.filter(l => l.todo_id !== todoId);
-    this._saveScopeData(scope, data);
+    this._saveData(data);
     return { success: true };
     return { success: true };
   }
 
   async completeTodoIdempotent(todoId, logData, completionToken) {
-    const scope = this.currentScope;
+    
     const cleanBlocker = sanitizeText(logData.blocked_reason);
     const cleanMin = clampNum(logData.actual_minutes);
     if (cleanMin <= 0) {
@@ -679,8 +676,8 @@ class SupabaseScopeEngine {
     }
     const encryptedBlocker = await encryptText(cleanBlocker);
 
-    const data = this._loadScopeData(scope);
-    const todo = data.todos.find(t => String(t.id) === String(todoId) && t.scope === scope);
+    const data = this._loadData();
+    const todo = data.todos.find(t => String(t.id) === String(todoId) );
     if (!todo) {
       throw new Error('할 일을 찾을 수 없습니다. (PostgreSQL RLS 404)');
     }
@@ -690,12 +687,13 @@ class SupabaseScopeEngine {
     const newLog = {
       id: crypto.randomUUID(),
       todo_id: todoId,
-      scope: scope,
+      
       execution_start: logData.execution_start || new Date().toISOString(),
       execution_end: logData.execution_end || new Date().toISOString(),
       actual_minutes: cleanMin,
       blocked_reason: encryptedBlocker,
-      completion_token: completionToken,
+        memo: encryptedMemo,
+        completion_token: completionToken,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -706,44 +704,44 @@ class SupabaseScopeEngine {
     todo.is_completed = true;
     todo.completed_at = todo.completed_at || new Date().toISOString();
     todo.updated_at = new Date().toISOString();
-    this._saveScopeData(scope, data);
+    this._saveData(data);
 
     if (this.isCloudConfigured) {
       try {
         const parentPlan = data.plans.find(p => String(p.id) === String(todo.plan_id));
         if (parentPlan) {
-          await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
+          await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
             method: 'POST',
             headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify({ ...parentPlan, scope })
+            body: JSON.stringify({ ...parentPlan })
           }).catch(() => {});
         }
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
           method: 'POST',
           headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify({ ...todo, scope })
+          body: JSON.stringify({ ...todo })
         }).catch(() => {});
 
         // Direct update and log insert
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}&scope=eq.${scope}`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
           body: JSON.stringify({ is_completed: true, completed_at: todo.completed_at, updated_at: todo.updated_at })
         }).catch(() => {});
 
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?todo_id=eq.${todoId}&scope=eq.${scope}`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?todo_id=eq.${todoId}`, {
           method: 'DELETE',
           headers: this._getCloudHeaders()
         }).catch(() => {});
 
         if (!isDuplicateToken) {
-          await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs`, {
+          await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs`, {
             method: 'POST',
             headers: this._getCloudHeaders(),
             body: JSON.stringify({
               id: newLog.id,
               todo_id: todoId,
-              scope,
+             
               execution_start: newLog.execution_start,
               execution_end: newLog.execution_end,
               actual_minutes: cleanMin,
@@ -761,7 +759,7 @@ class SupabaseScopeEngine {
   }
 
   async addDoLog(todoId, logData) {
-    const scope = this.currentScope;
+    
     const cleanBlocker = sanitizeText(logData.blocked_reason);
     const cleanMin = clampNum(logData.actual_minutes);
     if (cleanMin <= 0) {
@@ -769,58 +767,59 @@ class SupabaseScopeEngine {
     }
     const encryptedBlocker = await encryptText(cleanBlocker);
 
-    const data = this._loadScopeData(scope);
-    const todo = data.todos.find(t => String(t.id) === String(todoId) && t.scope === scope);
+    const data = this._loadData();
+    const todo = data.todos.find(t => String(t.id) === String(todoId) );
 
     // Strictly replace ANY existing logs for this todo with the single authoritative log
     const otherLogs = data.do_logs.filter(l => String(l.todo_id) !== String(todoId));
     const newLog = {
       id: crypto.randomUUID(),
       todo_id: todoId,
-      scope: scope,
+      
       execution_start: logData.execution_start || new Date().toISOString(),
       execution_end: logData.execution_end || new Date().toISOString(),
       actual_minutes: cleanMin,
       blocked_reason: encryptedBlocker,
-      completion_token: logData.completion_token || crypto.randomUUID(),
+        memo: encryptedMemo,
+        completion_token: logData.completion_token || crypto.randomUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
     otherLogs.push(newLog);
     data.do_logs = otherLogs;
-    this._saveScopeData(scope, data);
+    this._saveData(data);
 
     if (this.isCloudConfigured) {
       try {
         if (todo) {
           const parentPlan = data.plans.find(p => String(p.id) === String(todo.plan_id));
           if (parentPlan) {
-            await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
+            await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
               method: 'POST',
               headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-              body: JSON.stringify({ ...parentPlan, scope })
+              body: JSON.stringify({ ...parentPlan })
             }).catch(() => {});
           }
-          await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
+          await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
             method: 'POST',
             headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify({ ...todo, scope })
+            body: JSON.stringify({ ...todo })
           }).catch(() => {});
         }
 
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?todo_id=eq.${todoId}&scope=eq.${scope}`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?todo_id=eq.${todoId}`, {
           method: 'DELETE',
           headers: this._getCloudHeaders()
         }).catch(() => {});
 
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
           body: JSON.stringify({
             id: newLog.id,
             todo_id: todoId,
-            scope,
+           
             execution_start: newLog.execution_start,
             execution_end: newLog.execution_end,
             actual_minutes: cleanMin,
@@ -837,7 +836,7 @@ class SupabaseScopeEngine {
   }
 
   async createSeeReview(reviewData) {
-    const scope = this.currentScope;
+    
     const cleanInsight = sanitizeText(reviewData.adjustment_insight);
     const encryptedInsight = await encryptText(cleanInsight);
 
@@ -851,8 +850,8 @@ class SupabaseScopeEngine {
       adjustment_insight: encryptedInsight
     };
 
-    const data = this._loadScopeData(scope);
-    const targetPlan = data.plans.find(p => String(p.id) === String(reviewData.plan_id) && p.scope === scope);
+    const data = this._loadData();
+    const targetPlan = data.plans.find(p => String(p.id) === String(reviewData.plan_id) );
     if (!targetPlan) {
       throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
@@ -860,24 +859,24 @@ class SupabaseScopeEngine {
     const newReview = {
       id: crypto.randomUUID(),
       ...payload,
-      scope: scope,
+      
       created_at: new Date().toISOString()
     };
     data.see_reviews.unshift(newReview);
-    this._saveScopeData(scope, data);
+    this._saveData(data);
 
     if (this.isCloudConfigured) {
       try {
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
           method: 'POST',
           headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify({ ...targetPlan, scope })
+          body: JSON.stringify({ ...targetPlan })
         }).catch(() => {});
 
-        await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/see_reviews`, {
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/see_reviews`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify({ ...payload, id: newReview.id, scope })
+          body: JSON.stringify({ ...payload, id: newReview.id })
         });
       } catch (err) {
         console.warn('Cloud createSeeReview sync warning:', err.message);
@@ -887,91 +886,95 @@ class SupabaseScopeEngine {
     return { ...newReview, adjustment_insight: cleanInsight };
   }
 
-  async purgeActiveScope() {
-    const scope = this.currentScope;
+  async purgeUserData() {
+    return this.purgeAll();
+  }
+
+  async purgeAll() {
+    
 
     const cleared = {
-      scope: scope,
+      
       plans: [],
       plan_histories: [],
       todos: [],
       do_logs: [],
       see_reviews: []
     };
-    this._saveScopeData(scope, cleared);
+    this._saveData(cleared);
 
     if (this.isCloudConfigured) {
       try {
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = this._getCloudHeaders();
         await Promise.all([
-          fetch(`${url}/see_reviews?scope=eq.${scope}`, { method: 'DELETE', headers }),
-          fetch(`${url}/do_logs?scope=eq.${scope}`, { method: 'DELETE', headers }),
-          fetch(`${url}/todos?scope=eq.${scope}`, { method: 'DELETE', headers }),
-          fetch(`${url}/plan_histories?scope=eq.${scope}`, { method: 'DELETE', headers }),
-          fetch(`${url}/plans?scope=eq.${scope}`, { method: 'DELETE', headers })
+          this._fetch(`${url}/see_reviews`, { method: 'DELETE', headers }),
+          this._fetch(`${url}/do_logs`, { method: 'DELETE', headers }),
+          this._fetch(`${url}/todos`, { method: 'DELETE', headers }),
+          this._fetch(`${url}/plan_histories`, { method: 'DELETE', headers }),
+          this._fetch(`${url}/plans`, { method: 'DELETE', headers })
         ]);
       } catch (err) {
-        console.warn('Cloud scope purge sync warning:', err.message);
+        console.warn('Cloud data purge sync warning:', err.message);
       }
     }
 
-    return { success: true, scope };
+    return { success: true };
   }
 
-  async populateSyntheticSeed(scope = this.currentScope) {
-    const seed = this._createSeedData(scope);
-    this._saveScopeData(scope, seed);
+  async populateSyntheticSeed() {
+    const seed = this._createSeedData();
+    this._saveData(seed);
 
     if (this.isCloudConfigured) {
       try {
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' };
         if (seed.plans.length > 0) {
-          await fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(seed.plans) }).catch(() => {});
+          await this._fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(seed.plans) }).catch(() => {});
         }
         if (seed.todos.length > 0) {
-          await fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(seed.todos) }).catch(() => {});
+          await this._fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(seed.todos) }).catch(() => {});
         }
         if (seed.do_logs.length > 0) {
-          await fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(seed.do_logs) }).catch(() => {});
+          await this._fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(seed.do_logs) }).catch(() => {});
         }
       } catch (err) {
         console.warn('Cloud populateSyntheticSeed sync warning:', err.message);
       }
     }
 
-    return { success: true, scope };
+    return { success: true };
   }
 
-  async restoreScopeBackup(validatedPayload) {
-    const scope = this.currentScope;
-    const existing = this._loadScopeData(scope);
+  async restoreBackup(validatedPayload) {
+    
+    const existing = this._loadData();
 
     // Encrypt sensitive fields for safe at-rest storage
     const encryptedPlans = await Promise.all((validatedPayload.plans || []).map(async p => ({
       ...p,
-      scope,
+     
       success_criteria: p.success_criteria ? await encryptText(p.success_criteria) : ''
     })));
     const encryptedHistories = await Promise.all((validatedPayload.plan_histories || []).map(async h => ({
       ...h,
-      scope,
+     
       success_criteria: h.success_criteria ? await encryptText(h.success_criteria) : ''
     })));
     const encryptedTodos = await Promise.all((validatedPayload.todos || []).map(async t => ({
       ...t,
-      scope,
+     
       description: t.description ? await encryptText(t.description) : ''
     })));
     const encryptedLogs = await Promise.all((validatedPayload.do_logs || []).map(async l => ({
       ...l,
-      scope,
+     
       blocked_reason: l.blocked_reason ? await encryptText(l.blocked_reason) : ''
     })));
     const encryptedReviews = await Promise.all((validatedPayload.see_reviews || []).map(async r => ({
       ...r,
-      scope,
+     
       adjustment_insight: r.adjustment_insight ? await encryptText(r.adjustment_insight) : ''
     })));
 
@@ -1002,7 +1005,7 @@ class SupabaseScopeEngine {
     }
 
     const merged = {
-      scope,
+     
       plans: Array.from(planMap.values()),
       plan_histories: Array.from(historyMap.values()),
       todos: Array.from(todoMap.values()),
@@ -1010,29 +1013,29 @@ class SupabaseScopeEngine {
       see_reviews: Array.from(reviewMap.values())
     };
 
-    this._saveScopeData(scope, merged);
+    this._saveData(merged);
 
     if (this.isCloudConfigured) {
       try {
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' };
         if (merged.plans.length > 0) {
-          await fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(merged.plans) }).catch(() => {});
+          await this._fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(merged.plans) }).catch(() => {});
         }
         if (merged.plan_histories.length > 0) {
-          await fetch(`${url}/plan_histories`, { method: 'POST', headers, body: JSON.stringify(merged.plan_histories) }).catch(() => {});
+          await this._fetch(`${url}/plan_histories`, { method: 'POST', headers, body: JSON.stringify(merged.plan_histories) }).catch(() => {});
         }
         if (merged.todos.length > 0) {
-          await fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(merged.todos) }).catch(() => {});
+          await this._fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(merged.todos) }).catch(() => {});
         }
         if (merged.do_logs.length > 0) {
-          await fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(merged.do_logs) }).catch(() => {});
+          await this._fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(merged.do_logs) }).catch(() => {});
         }
         if (merged.see_reviews.length > 0) {
-          await fetch(`${url}/see_reviews`, { method: 'POST', headers, body: JSON.stringify(merged.see_reviews) }).catch(() => {});
+          await this._fetch(`${url}/see_reviews`, { method: 'POST', headers, body: JSON.stringify(merged.see_reviews) }).catch(() => {});
         }
       } catch (err) {
-        console.warn('Cloud restoreScopeBackup sync warning:', err.message);
+        console.warn('Cloud restoreBackup sync warning:', err.message);
       }
     }
 
@@ -1040,4 +1043,4 @@ class SupabaseScopeEngine {
   }
 }
 
-export const dbClient = new SupabaseScopeEngine();
+export const dbClient = new SupabaseEngine();

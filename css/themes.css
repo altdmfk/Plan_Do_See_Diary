@@ -36,6 +36,13 @@
   --priority-low-text: #4b5563;
   --priority-low-border: #e5e7eb;
   --priority-low-dot: #9ca3af;
+
+  /* Universal Semantic Colors */
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
 }
 
 /* 1. Muted Bright Pastel Pink Theme */

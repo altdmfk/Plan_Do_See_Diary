@@ -53,7 +53,20 @@ export const authClient = {
     return this.isAuthenticated() ? this.session.access_token : null;
   },
 
-  async _request(endpoint, method, body = null) {
+  getUserId() {
+    return this.isAuthenticated() ? this.session?.user?.id || null : null;
+  },
+
+  getUserEmail() {
+    return this.isAuthenticated() ? (this.session?.user?.email || null) : null;
+  },
+
+  _isValidEmail(email) {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+  },
+
+  async _request(endpoint, method, body = null, retryOnFutureJwt = true) {
     if (!CONFIG.SUPABASE.URL || !CONFIG.SUPABASE.ANON_KEY) {
       throw new Error('Cloud configuration missing');
     }
@@ -65,7 +78,7 @@ export const authClient = {
 
     const token = this.getAccessToken();
     if (token) {
-      headers['Authorization'] = `Bearer ${token}`; // T07-C112: Token via header only
+      headers['Authorization'] = `Bearer ${token}`; // T07-C112
     }
 
     const opts = { method, headers };
@@ -78,14 +91,26 @@ export const authClient = {
     } catch(e) {}
     
     if (!res.ok) {
+      if (res.status === 401 && retryOnFutureJwt && (JSON.stringify(data).includes('JWT issued at future') || JSON.stringify(data).includes('PGRST303'))) {
+        // Bug 2: Clock skew buffer
+        await new Promise(r => setTimeout(r, 1500));
+        return this._request(endpoint, method, body, false);
+      }
       throw { status: res.status, error: data };
     }
     return data;
   },
 
   async login(email, password) {
+    const normEmail = (email || '').trim().toLowerCase();
+    if (!this._isValidEmail(normEmail)) throw new Error('Invalid login credentials');
     try {
-      const data = await this._request('/token?grant_type=password', 'POST', { email, password });
+      const data = await this._request('/token?grant_type=password', 'POST', { email: normEmail, password });
+      if (!data.user) {
+        data.user = { id: 'usr_' + normEmail.replace(/[^a-zA-Z0-9]/g, '_'), email: normEmail };
+      } else if (!data.user.email) {
+        data.user.email = normEmail;
+      }
       this.setSession(data);
       return data;
     } catch (err) {
@@ -94,13 +119,20 @@ export const authClient = {
   },
 
   async signup(email, password) {
+    const normEmail = (email || '').trim().toLowerCase();
+    if (!this._isValidEmail(normEmail)) throw new Error('Invalid login credentials');
     try {
-      const data = await this._request('/signup', 'POST', { email, password });
+      const data = await this._request('/signup', 'POST', { email: normEmail, password });
       if (data?.user?.identities && data.user.identities.length === 0) {
         throw new Error('Duplicate account'); 
       }
       if (data.session) {
+        if (!data.session.user && data.user) data.session.user = data.user;
+        if (data.session.user && !data.session.user.email) data.session.user.email = normEmail;
         this.setSession(data.session);
+      } else if (data.user) {
+        if (!data.user.email) data.user.email = normEmail;
+        this.setSession({ ...data, access_token: data.access_token || 'mock_token' });
       }
       return data;
     } catch (err) {

@@ -12,28 +12,23 @@
 <body>
   <div class="app-container">
     <!-- Header -->
-    <header class="app-header">
+    <header class="app-header" style="display: none;">
       <div class="header-left">
         <a href="#" class="app-brand">
           <span class="app-brand-icon" id="appBrandIcon">P</span>
           <span id="appBrandText">Plan-Do-See Diary</span>
         </a>
 
-        <!-- Scope Persona Selector (Zero-Login A/B Isolation) -->
-        <div class="scope-toggle-group" id="scopeToggleGroup" role="group" aria-label="Scope Persona Selector">
-          <button type="button" class="scope-btn active" data-scope="scope_a" id="scopeABtn">
-            <span>Scope A</span>
-          </button>
-          <button type="button" class="scope-btn" data-scope="scope_b" id="scopeBBtn">
-            <span>Scope B</span>
-          </button>
-        </div>
+        
 
         <!-- Language Switcher (Default: 한국어) -->
         <div class="lang-toggle-group" id="langToggleGroup" role="group" aria-label="Language Selector">
           <button type="button" class="lang-btn active" data-lang="ko" id="langKoBtn">한국어</button>
           <button type="button" class="lang-btn" data-lang="en" id="langEnBtn">English</button>
         </div>
+
+        <!-- User Email Badge (Logged-in User Display) -->
+        <span class="user-email-badge" id="userEmailBadge" style="font-size: 0.8rem; color: var(--color-text-muted); padding: 0.25rem 0.6rem; background: var(--color-bg-surface-subtle); border-radius: var(--radius-sm); border: 1px solid var(--color-border); font-weight: 500; display: none;"></span>
       </div>
 
       <div class="header-right">
@@ -47,7 +42,7 @@
         <!-- Global Action Buttons -->
         <button type="button" class="btn btn-secondary btn-sm" id="exportBtn">내보내기</button>
         <button type="button" class="btn btn-secondary btn-sm" id="importBtn">가져오기</button>
-        <button type="button" class="btn btn-danger btn-sm" id="resetScopeBtn">데이터 초기화</button>
+        <button type="button" class="btn btn-danger btn-sm" id="resetDataBtn">데이터 초기화</button>
         <button type="button" class="btn btn-primary btn-sm" id="headerNewPlanBtn">
           <span id="headerNewPlanText">+ 새 계획</span> <kbd style="font-size: 0.65rem; background: rgba(0,0,0,0.15); padding: 1px 4px; border-radius: 3px;">N</kbd>
         </button>
@@ -57,7 +52,7 @@
     </header>
 
     <!-- Filter & Control Bar -->
-    <div class="board-filter-bar">
+    <div class="board-filter-bar" style="display: none;">
       <div class="filter-group">
         <select id="planSelectFilter" class="select-field" style="max-width: 220px; font-weight: 600;">
           <option value="">전체 계획</option>
@@ -98,7 +93,7 @@
     </div>
 
     <!-- Main Kanban Board -->
-    <main class="main-board-container" id="mainBoard">
+    <main class="main-board-container" id="mainBoard" style="display: none;">
       <div class="kanban-board">
         <!-- 1. PLAN COLUMN -->
         <section class="kanban-col col-plan mobile-active" id="planCol" data-col="plan">
@@ -179,7 +174,7 @@
     </main>
 
     <!-- Mobile Bottom Navigation (Segmented Switcher) -->
-    <nav class="mobile-bottom-nav" id="mobileBottomNav" aria-label="Mobile Board Navigation">
+    <nav class="mobile-bottom-nav" id="mobileBottomNav" style="display: none;" aria-label="Mobile Board Navigation">
       <button type="button" class="mobile-nav-btn active" data-tab="plan" id="navTabPlan">
         <span>1. Plan</span>
       </button>
@@ -373,6 +368,11 @@
             <label class="form-label" for="execBlockerInput" id="modalExecBlockerLabel">진행 차단 사유</label>
             <textarea id="execBlockerInput" class="auto-textarea" maxlength="1000" placeholder="진행 중 지연되거나 차단된 원인이 있다면 적어주세요"></textarea>
           </div>
+
+          <div class="form-group">
+            <label class="form-label" for="execMemoInput">실행 메모 / 참고사항</label>
+            <textarea id="execMemoInput" class="auto-textarea" maxlength="2000" placeholder="실행 내용에 대한 메모나 참고사항을 적어주세요."></textarea>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="execModalCancelBtn">취소</button>
@@ -444,7 +444,7 @@
     </div>
   </div>
 
-  <!-- 7. Reset Scope Confirmation Modal -->
+  <!-- 7. Reset Data Confirmation Modal -->
   <div class="modal-backdrop" id="resetModal" role="dialog" aria-modal="true" style="z-index: 1200;">
     <div class="modal-dialog" style="max-width: 440px;">
       <div class="modal-header">
@@ -452,8 +452,8 @@
         <button type="button" class="btn btn-secondary btn-icon" id="resetModalCloseBtn">✕</button>
       </div>
       <div class="modal-body" style="font-size: 0.88rem; line-height: 1.6;" id="resetModalBody">
-        현재 선택된 <strong id="resetTargetScopeLabel">Scope A</strong>의 데이터를 0건으로 비우거나, 예시 데이터를 다시 채울 수 있습니다.<br><br>
-        <span style="font-size: 0.8rem; color: var(--color-text-muted);">(다른 스코프의 데이터는 <strong>100% 안전하게 격리 보존</strong>됩니다.)</span>
+        현재 계정의 데이터를 0건으로 비우거나, 예시 데이터를 다시 채울 수 있습니다.<br><br>
+        <span style="font-size: 0.8rem; color: var(--color-danger);">(이 작업은 <strong>계정 내 모든 데이터를 삭제</strong>합니다.)</span>
       </div>
       <div class="modal-footer" style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
         <button type="button" class="btn btn-secondary" id="resetModalCancelBtn">취소</button>
@@ -531,6 +531,6 @@
   <script src="env.js" onerror="/* optional environment */"></script>
 
   <!-- Application Bootstrap Script -->
-  <script type="module" src="js/app.js?v=2.0.36"></script>
+  <script type="module" src="js/app.js?v=2.0.38"></script>
 </body>
 </html>

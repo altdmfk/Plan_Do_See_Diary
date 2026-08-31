@@ -28,7 +28,6 @@ END $$;
 CREATE TABLE IF NOT EXISTS plans (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
-    scope persona_scope NOT NULL DEFAULT 'scope_a',
     title VARCHAR(255) NOT NULL,
     period_start DATE NOT NULL,
     period_end DATE NOT NULL,
@@ -45,7 +44,6 @@ CREATE TABLE IF NOT EXISTS plan_histories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-    scope persona_scope NOT NULL DEFAULT 'scope_a',
     revision_number INT NOT NULL DEFAULT 1,
     title VARCHAR(255) NOT NULL,
     period_start DATE NOT NULL,
@@ -63,7 +61,6 @@ CREATE TABLE IF NOT EXISTS todos (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-    scope persona_scope NOT NULL DEFAULT 'scope_a',
     title VARCHAR(255) NOT NULL,
     description TEXT DEFAULT '',
     due_date DATE NOT NULL,
@@ -82,11 +79,11 @@ CREATE TABLE IF NOT EXISTS do_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     todo_id UUID NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
-    scope persona_scope NOT NULL DEFAULT 'scope_a',
     execution_start TIMESTAMPTZ NOT NULL,
     execution_end TIMESTAMPTZ NOT NULL,
     actual_minutes INT NOT NULL DEFAULT 0,
     blocked_reason TEXT NOT NULL DEFAULT '',
+    memo TEXT NOT NULL DEFAULT '',
     completion_token VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT (now() AT TIME ZONE 'utc'),
     CONSTRAINT uq_do_logs_todo_completion_token UNIQUE (todo_id, completion_token)
@@ -97,7 +94,6 @@ CREATE TABLE IF NOT EXISTS see_reviews (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
     plan_id UUID NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
-    scope persona_scope NOT NULL DEFAULT 'scope_a',
     review_date DATE NOT NULL,
     planned_count INT NOT NULL DEFAULT 0,
     completed_count INT NOT NULL DEFAULT 0,
@@ -112,38 +108,35 @@ CREATE TABLE IF NOT EXISTS see_reviews (
 -- Indexes for high-frequency queries
 CREATE INDEX IF NOT EXISTS idx_plans_user_scope_status ON plans (user_id, scope, status);
 CREATE INDEX IF NOT EXISTS idx_plan_histories_plan ON plan_histories (plan_id, revision_number);
-CREATE INDEX IF NOT EXISTS idx_todos_plan_scope ON todos (plan_id, scope);
 CREATE INDEX IF NOT EXISTS idx_todos_due_completed ON todos (due_date, is_completed);
-CREATE INDEX IF NOT EXISTS idx_do_logs_todo_scope ON do_logs (todo_id, scope);
-CREATE INDEX IF NOT EXISTS idx_see_reviews_plan_scope ON see_reviews (plan_id, scope);
 
 -- 7. pgcrypto Key Derivation & Encryption Functions (Zero Client Secrets)
-CREATE OR REPLACE FUNCTION get_scope_vault_key(p_scope persona_scope)
+CREATE OR REPLACE FUNCTION get_vault_key(p_uid UUID)
 RETURNS text AS $$
 BEGIN
-    RETURN encode(digest('pds_vault_at_rest_' || p_scope::text, 'sha256'), 'hex');
+    RETURN encode(digest('pds_vault_at_rest_' || p_uid::text, 'sha256'), 'hex');
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
-CREATE OR REPLACE FUNCTION pds_encrypt_text(p_text TEXT, p_scope persona_scope)
+CREATE OR REPLACE FUNCTION pds_encrypt_text(p_text TEXT, p_uid UUID)
 RETURNS TEXT AS $$
 BEGIN
     IF p_text IS NULL OR trim(p_text) = '' THEN
         RETURN p_text;
     END IF;
     -- Uses standard AES symmetric cipher via PostgreSQL pgcrypto
-    RETURN encode(pgp_sym_encrypt(p_text, get_scope_vault_key(p_scope)), 'base64');
+    RETURN encode(pgp_sym_encrypt(p_text, get_vault_key(p_uid)), 'base64');
 END;
 $$ LANGUAGE plpgsql STABLE;
 
-CREATE OR REPLACE FUNCTION pds_decrypt_text(p_ciphertext TEXT, p_scope persona_scope)
+CREATE OR REPLACE FUNCTION pds_decrypt_text(p_ciphertext TEXT, p_uid UUID)
 RETURNS TEXT AS $$
 BEGIN
     IF p_ciphertext IS NULL OR trim(p_ciphertext) = '' THEN
         RETURN p_ciphertext;
     END IF;
     BEGIN
-        RETURN pgp_sym_decrypt(decode(p_ciphertext, 'base64'), get_scope_vault_key(p_scope));
+        RETURN pgp_sym_decrypt(decode(p_ciphertext, 'base64'), get_vault_key(p_uid));
     EXCEPTION WHEN OTHERS THEN
         RETURN p_ciphertext; -- Fallback if plaintext
     END;
@@ -161,12 +154,12 @@ BEGIN
     WHERE plan_id = OLD.id;
 
     INSERT INTO plan_histories (
-        user_id, plan_id, scope, revision_number, title,
+        user_id, plan_id, revision_number, title,
         period_start, period_end, priority,
         success_criteria, estimated_hours, status,
         reason, changed_at
     ) VALUES (
-        OLD.user_id, OLD.id, OLD.scope, next_rev, OLD.title,
+        OLD.user_id, OLD.id, next_rev, OLD.title,
         OLD.period_start, OLD.period_end, OLD.priority,
         OLD.success_criteria, OLD.estimated_hours, OLD.status,
         'Revision before update', now() AT TIME ZONE 'utc'
@@ -201,42 +194,42 @@ ALTER TABLE see_reviews ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS rls_plans_auth ON plans;
 CREATE POLICY rls_plans_auth ON plans
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+    USING (user_id = auth.uid() )
+    WITH CHECK (user_id = auth.uid() );
 
 DROP POLICY IF EXISTS rls_plan_histories_auth ON plan_histories;
 CREATE POLICY rls_plan_histories_auth ON plan_histories
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+    USING (user_id = auth.uid() )
+    WITH CHECK (user_id = auth.uid() );
 
 DROP POLICY IF EXISTS rls_todos_auth ON todos;
 CREATE POLICY rls_todos_auth ON todos
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+    USING (user_id = auth.uid() )
+    WITH CHECK (user_id = auth.uid() );
 
 DROP POLICY IF EXISTS rls_do_logs_auth ON do_logs;
 CREATE POLICY rls_do_logs_auth ON do_logs
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+    USING (user_id = auth.uid() )
+    WITH CHECK (user_id = auth.uid() );
 
 DROP POLICY IF EXISTS rls_see_reviews_auth ON see_reviews;
 CREATE POLICY rls_see_reviews_auth ON see_reviews
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope))
-    WITH CHECK (user_id = auth.uid() AND scope IN ('scope_a'::persona_scope, 'scope_b'::persona_scope));
+    USING (user_id = auth.uid() )
+    WITH CHECK (user_id = auth.uid() );
 
 -- 10. Idempotent Todo Completion Function
 CREATE OR REPLACE FUNCTION complete_todo_idempotent(
     p_todo_id UUID,
-    p_scope persona_scope,
     p_token VARCHAR,
     p_start TIMESTAMPTZ,
     p_end TIMESTAMPTZ,
     p_actual_min INT,
-    p_blocked TEXT
+    p_blocked TEXT,
+    p_memo TEXT DEFAULT ''
 ) RETURNS json AS $$
 DECLARE
     v_todo todos%ROWTYPE;
@@ -247,17 +240,17 @@ BEGIN
         RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
     END IF;
 
-    SELECT * INTO v_todo FROM todos WHERE id = p_todo_id AND scope = p_scope AND user_id = v_uid;
+    SELECT * INTO v_todo FROM todos WHERE id = p_todo_id AND user_id = v_uid;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Todo not found in current scope or unauthorized' USING ERRCODE = '42501';
     END IF;
 
     INSERT INTO do_logs (
-        user_id, todo_id, scope, execution_start, execution_end,
-        actual_minutes, blocked_reason, completion_token
+        user_id, todo_id, execution_start, execution_end,
+        actual_minutes, blocked_reason, memo, completion_token
     ) VALUES (
-        v_uid, p_todo_id, p_scope, p_start, p_end,
-        p_actual_min, pds_encrypt_text(p_blocked, p_scope), p_token
+        v_uid, p_todo_id, p_start, p_end,
+        p_actual_min, pds_encrypt_text(p_blocked, v_uid), pds_encrypt_text(p_memo, v_uid), p_token
     )
     ON CONFLICT (todo_id, completion_token) DO NOTHING
     RETURNING * INTO v_log;
@@ -266,7 +259,7 @@ BEGIN
     SET is_completed = TRUE,
         completed_at = COALESCE(v_todo.completed_at, p_end),
         updated_at = now() AT TIME ZONE 'utc'
-    WHERE id = p_todo_id AND scope = p_scope AND user_id = v_uid;
+    WHERE id = p_todo_id AND user_id = v_uid;
 
     RETURN json_build_object(
         'success', true,
@@ -277,7 +270,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 11. Scope Purge Function (Full Reset for active persona only)
-CREATE OR REPLACE FUNCTION purge_persona_scope(p_scope persona_scope)
+CREATE OR REPLACE FUNCTION purge_user_data()
 RETURNS json AS $$
 DECLARE
     v_deleted_plans INT;
@@ -287,16 +280,15 @@ BEGIN
         RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
     END IF;
 
-    DELETE FROM see_reviews WHERE scope = p_scope AND user_id = v_uid;
-    DELETE FROM do_logs WHERE scope = p_scope AND user_id = v_uid;
-    DELETE FROM todos WHERE scope = p_scope AND user_id = v_uid;
-    DELETE FROM plan_histories WHERE scope = p_scope AND user_id = v_uid;
-    DELETE FROM plans WHERE scope = p_scope AND user_id = v_uid;
+    DELETE FROM see_reviews WHERE user_id = v_uid;
+    DELETE FROM do_logs WHERE user_id = v_uid;
+    DELETE FROM todos WHERE user_id = v_uid;
+    DELETE FROM plan_histories WHERE user_id = v_uid;
+    DELETE FROM plans WHERE user_id = v_uid;
     GET DIAGNOSTICS v_deleted_plans = ROW_COUNT;
 
     RETURN json_build_object(
         'success', true,
-        'scope', p_scope,
         'purged_plans_count', v_deleted_plans
     );
 END;

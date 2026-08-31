@@ -7,8 +7,6 @@
 export const I18N = {
   ko: {
     appTitle: 'Plan-Do-See Diary',
-    scopeA: 'Scope A',
-    scopeB: 'Scope B',
     themePink: '핑크',
     themeForest: '포레스트',
     themeDark: '다크',
@@ -88,7 +86,7 @@ export const I18N = {
     startDateLabel: '시작일 (KST) *',
     endDateLabel: '종료일 (KST) *',
     priorityLabel: '우선순위',
-    estimatedHoursLabel: '예상 소요 시간',
+    estimatedHoursLabel: '예상 소요 시간 (분)',
     estimatedHoursPlaceholder: '예: 600',
     successCriteriaLabel: '목표 달성 기준',
     successCriteriaPlaceholder: '예: 주 4회 운동 완료 및 하루 물 2L 마시기',
@@ -103,7 +101,7 @@ export const I18N = {
     todoTitleLabel: '할 일 제목 *',
     todoTitlePlaceholder: '예: 퇴근 후 헬스장에서 런닝머신 40분 뛰기',
     dueDateLabel: '마감일 (KST) *',
-    estimatedMinutesLabel: '예상 소요 시간',
+    estimatedMinutesLabel: '예상 소요 시간 (분)',
     tagsLabel: '태그 (쉼표로 구분)',
     tagsPlaceholder: '예: 운동, 건강, 습관',
     descriptionLabel: '상세 설명',
@@ -139,7 +137,7 @@ export const I18N = {
     discardBtn: '변경사항 취소',
 
     resetModalTitle: '데이터 초기화 및 관리',
-    resetModalBody: '현재 선택된 <strong id="resetTargetScopeLabel">Scope A</strong>의 데이터를 0건으로 비우거나, 예시 데이터를 다시 채울 수 있습니다.<br><br><span style="font-size: 0.8rem; color: var(--color-text-muted);">(다른 스코프의 데이터는 <strong>100% 안전하게 격리 보존</strong>됩니다.)</span>',
+    resetModalBody: '내 계정의 데이터를 0건으로 비우거나, 예시 데이터를 다시 채울 수 있습니다.',
     resetSeedBtn: '예시 데이터 생성',
     resetConfirmBtn: '0건으로 완전 초기화',
     loadExampleBtn: '예시 데이터 생성',
@@ -187,8 +185,6 @@ export const I18N = {
 
   en: {
     appTitle: 'Plan-Do-See Diary',
-    scopeA: 'Scope A',
-    scopeB: 'Scope B',
     themePink: 'Pink',
     themeForest: 'Forest',
     themeDark: 'Dark',
@@ -319,7 +315,7 @@ export const I18N = {
     discardBtn: 'Discard Changes',
 
     resetModalTitle: 'Reset & Manage Data',
-    resetModalBody: 'You can purge all records for <strong id="resetTargetScopeLabel">Scope A</strong> to 0 rows, or reload example demo data.<br><br><span style="font-size: 0.8rem; color: var(--color-text-muted);">(The other scope will remain <strong>100% untouched and isolated</strong>.)</span>',
+    resetModalBody: 'You can purge your account data to 0 rows or reload example data.',
     resetSeedBtn: 'Generate Examples',
     resetConfirmBtn: 'Purge to 0 Items',
     loadExampleBtn: 'Generate Examples',
@@ -353,7 +349,7 @@ export const I18N = {
     langChanged: 'Language set to English.',
     backupExported: 'Backup JSON exported successfully.',
     backupImported: 'Backup restored and migrated successfully (0 duplicate rows).',
-    resetSuccess: 'Active scope data purged to 0 rows.',
+    resetSuccess: 'Data purged to 0 rows.',
     selectPlanFirst: 'Please select a plan first.',
     noChangesMade: 'No changes were made to the plan.',
     tagFilterActive: 'Tag Filter',

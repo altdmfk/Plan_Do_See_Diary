@@ -1,3 +1,32 @@
+
+// --- APP VISIBILITY ORCHESTRATOR ---
+export function updateAppVisibility(isAuthenticated) {
+  const authOverlay = document.getElementById('authOverlay');
+  const mainBoard = document.getElementById('mainBoard');
+  const headerEl = document.querySelector('.app-header');
+  const filterBar = document.querySelector('.board-filter-bar');
+  const mobileNav = document.getElementById('mobileBottomNav');
+  const userEmailBadge = document.getElementById('userEmailBadge');
+
+  if (authOverlay) authOverlay.hidden = Boolean(isAuthenticated);
+  if (mainBoard) mainBoard.style.display = isAuthenticated ? '' : 'none';
+  if (headerEl) headerEl.style.display = isAuthenticated ? '' : 'none';
+  if (filterBar) filterBar.style.display = isAuthenticated ? '' : 'none';
+  if (mobileNav) mobileNav.style.display = isAuthenticated ? '' : 'none';
+
+  if (userEmailBadge) {
+    const email = authClient.getUserEmail();
+    if (isAuthenticated && email) {
+      userEmailBadge.textContent = email;
+      userEmailBadge.style.display = 'inline-flex';
+      userEmailBadge.title = `Logged in as ${email}`;
+    } else {
+      userEmailBadge.textContent = '';
+      userEmailBadge.style.display = 'none';
+    }
+  }
+}
+
 /**
  * Plan-Do-See Diary - Main Orchestrator & Event Controller
  */
@@ -14,6 +43,8 @@ import {
   modalManager,
   setupAutoTextarea,
   updateFaviconAndBrand,
+  updateThemeButtons,
+  updateLanguageButtons,
   applyLanguageTranslations,
   renderPlanColumn,
   renderDoColumn,
@@ -35,15 +66,7 @@ const activeCheckboxToggles = new Set();
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
   authClient.init();
-
-  if (!authClient.isAuthenticated()) {
-    document.getElementById('authOverlay').hidden = false;
-    document.getElementById('mainBoard').style.display = 'none';
-    const headerEl = document.querySelector('.app-header');
-    if (headerEl) headerEl.style.display = 'none';
-  } else {
-    document.getElementById('authOverlay').hidden = true;
-  }
+  updateAppVisibility(authClient.isAuthenticated());
 
   bindAuthForms();
   
@@ -65,7 +88,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize data store if authenticated
   if (authClient.isAuthenticated()) {
-    await appState.init();
+    try {
+      await appState.init();
+    } catch (err) {
+      if (err.status === 401 || (err.message && err.message.includes('401'))) {
+        console.warn('Session expired or invalid, forcing logout');
+        authClient.clearSession();
+        API.clearSession();
+        appState.clearAll();
+        updateAppVisibility(false);
+      }
+    }
   }
 });
 
@@ -99,17 +132,13 @@ function bindAuthForms() {
       }
       
       // On success, show app
-      document.getElementById('authOverlay').hidden = true;
-      document.getElementById('mainBoard').style.display = '';
-      const headerEl = document.querySelector('.app-header');
-      if (headerEl) headerEl.style.display = '';
+      updateAppVisibility(true);
       await appState.init();
       authEmail.value = '';
       authPassword.value = '';
 
       // T07-C100: Prompt migration if local T06 data exists
-      const scope = appState.getState().scope;
-      const localKey = `pds_db_v2_${scope}`;
+      const localKey = 'pds_db_v2_scope_a';
       const hasLocalData = typeof localStorage !== 'undefined' && localStorage.getItem(localKey);
       if (hasLocalData) {
         modalManager.open('migrationModal');
@@ -141,30 +170,21 @@ function initLanguage() {
   applyLanguageTranslations();
 }
 
-function updateLanguageButtons(lang) {
-  document.getElementById('langKoBtn')?.classList.toggle('active', lang === 'ko');
-  document.getElementById('langEnBtn')?.classList.toggle('active', lang === 'en');
-}
-
 function setupAutoExpandingTextareas() {
   document.querySelectorAll('.auto-textarea').forEach(el => setupAutoTextarea(el));
 }
 
 // --- STATE SYNCHRONIZATION ---
 function onStateChange(state) {
-  // Update Scope buttons
-  document.getElementById('scopeABtn').classList.toggle('active', state.scope === CONFIG.SCOPES.SCOPE_A);
-  document.getElementById('scopeBBtn').classList.toggle('active', state.scope === CONFIG.SCOPES.SCOPE_B);
-
   // Update Active Plan Selector in Filter Bar
   const planSelect = document.getElementById('planSelectFilter');
   if (planSelect) {
-    const currentVal = state.filters.planId || '';
+    const currentVal = state.filters.planId || state.selectedPlanId || '';
     planSelect.innerHTML = `<option value="">${i18n.t('allPlans')} (${state.plans.length})</option>` +
       state.plans.map(p => `<option value="${p.id}" ${p.id === currentVal ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('');
   }
 
-  // Render Plan Column with search-filtered plans (including plans with matching child To Dos)
+  // Render Plan Column with search-filtered plans
   const filteredPlans = appState.getFilteredPlans();
   renderPlanColumn(filteredPlans, state.selectedPlanId);
 
@@ -177,14 +197,8 @@ function onStateChange(state) {
   const metrics = appState.getKSTMetrics();
   renderSeeColumn(metrics, selectedPlan, state.see_reviews);
 
-  // Mobile Tabs Sync
+  // Update mobile nav state
   updateMobileNavState(state.activeMobileTab);
-}
-
-function updateThemeButtons(theme) {
-  document.querySelectorAll('.theme-color-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.theme === theme);
-  });
 }
 
 function updateMobileNavState(tab) {
@@ -208,21 +222,6 @@ function startLiveKstClock() {
 
 // --- HEADER CONTROLS ---
 function bindHeaderControls() {
-  // Scope Switching (A/B) with Memory Purge
-  document.getElementById('scopeABtn').addEventListener('click', async () => {
-    if (appState.getState().scope !== CONFIG.SCOPES.SCOPE_A) {
-      await appState.switchScope(CONFIG.SCOPES.SCOPE_A);
-      showToast(i18n.t('scopeSwitched'), 'info');
-    }
-  });
-
-  document.getElementById('scopeBBtn').addEventListener('click', async () => {
-    if (appState.getState().scope !== CONFIG.SCOPES.SCOPE_B) {
-      await appState.switchScope(CONFIG.SCOPES.SCOPE_B);
-      showToast(i18n.t('scopeSwitched'), 'info');
-    }
-  });
-
   // Language Switching (KST / EDT)
   document.getElementById('langKoBtn')?.addEventListener('click', () => {
     i18n.setLang('ko');
@@ -260,7 +259,7 @@ function bindHeaderControls() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `pds-diary-${backup.scope}-${getKSTToday()}.json`;
+      link.download = `pds-diary-${getKSTToday()}.json`;
       link.click();
       URL.revokeObjectURL(url);
       showToast(i18n.t('backupExported'), 'success');
@@ -275,11 +274,10 @@ function bindHeaderControls() {
     modalManager.open('importModal');
   });
 
-  // Reset Scope Data Modal
-  document.getElementById('resetScopeBtn').addEventListener('click', () => {
-    const scopeLabel = appState.getState().scope === CONFIG.SCOPES.SCOPE_A ? 'Scope A' : 'Scope B';
-    const targetLabel = document.getElementById('resetTargetScopeLabel');
-    if (targetLabel) targetLabel.textContent = scopeLabel;
+  // Reset Data Modal
+  document.getElementById('resetDataBtn').addEventListener('click', () => {
+    
+    
     modalManager.open('resetModal');
   });
 
@@ -289,11 +287,9 @@ function bindHeaderControls() {
   // Logout (T07-C97)
   document.getElementById('logoutBtn').addEventListener('click', async () => {
     await authClient.logout();
+    API.clearSession();
     appState.clearAll();
-    document.getElementById('authOverlay').hidden = false;
-    document.getElementById('mainBoard').style.display = 'none';
-    const headerEl = document.querySelector('.app-header');
-    if (headerEl) headerEl.style.display = 'none';
+    updateAppVisibility(false);
     showToast('로그아웃되었습니다.', 'info');
   });
 
@@ -307,13 +303,11 @@ function bindHeaderControls() {
   document.getElementById('deleteAccountConfirmBtn').addEventListener('click', async () => {
     modalManager.close('deleteAccountModal');
     try {
-      await appState.purgeActiveScope();
+      
       await authClient.logout();
-      appState.clearAll();
-      document.getElementById('authOverlay').hidden = false;
-      document.getElementById('mainBoard').style.display = 'none';
-      const headerEl = document.querySelector('.app-header');
-      if (headerEl) headerEl.style.display = 'none';
+    API.clearSession();
+    appState.clearAll();
+      updateAppVisibility(false);
       showToast('계정이 삭제되었습니다.', 'success');
     } catch (err) {
       showToast('계정 삭제 중 오류가 발생했습니다.', 'error');
@@ -1253,7 +1247,7 @@ function bindModalForms() {
     };
 
     try {
-      await API.purgeCurrentScope();
+      await API.purgeUserData();
       modalManager.forceClose('resetModal');
       await appState.refreshData();
       appState.setSelectedPlan(null);
