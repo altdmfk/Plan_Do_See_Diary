@@ -18,7 +18,14 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
--- 2. Create Plans Table
+-- 2. Drop Legacy Tables to guarantee pristine schema migration with user_id
+DROP TABLE IF EXISTS see_reviews CASCADE;
+DROP TABLE IF EXISTS do_logs CASCADE;
+DROP TABLE IF EXISTS todos CASCADE;
+DROP TABLE IF EXISTS plan_histories CASCADE;
+DROP TABLE IF EXISTS plans CASCADE;
+
+-- 3. Create Plans Table
 CREATE TABLE IF NOT EXISTS plans (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -33,7 +40,7 @@ CREATE TABLE IF NOT EXISTS plans (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
 );
 
--- 3. Create Plan Histories Table (Immutable Snapshot Ledger)
+-- 4. Create Plan Histories Table (Immutable Snapshot Ledger)
 CREATE TABLE IF NOT EXISTS plan_histories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -50,7 +57,7 @@ CREATE TABLE IF NOT EXISTS plan_histories (
     changed_at TIMESTAMPTZ NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
 );
 
--- 4. Create ToDos Table
+-- 5. Create ToDos Table
 CREATE TABLE IF NOT EXISTS todos (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -68,7 +75,7 @@ CREATE TABLE IF NOT EXISTS todos (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
 );
 
--- 5. Create Do Logs Table (Execution Records with Idempotency Token)
+-- 6. Create Do Logs Table (Execution Records with Idempotency Token)
 CREATE TABLE IF NOT EXISTS do_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -83,7 +90,7 @@ CREATE TABLE IF NOT EXISTS do_logs (
     CONSTRAINT uq_do_logs_todo_completion_token UNIQUE (todo_id, completion_token)
 );
 
--- 6. Create See Reviews Table (KST Reflection & Analytics Metrics)
+-- 7. Create See Reviews Table (KST Reflection & Analytics Metrics)
 CREATE TABLE IF NOT EXISTS see_reviews (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -99,16 +106,6 @@ CREATE TABLE IF NOT EXISTS see_reviews (
     created_at TIMESTAMPTZ NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
 );
 
--- Migration safety: ensure user_id column exists if table pre-existed
-DO $$ BEGIN
-    ALTER TABLE plans ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
-    ALTER TABLE plan_histories ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
-    ALTER TABLE todos ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
-    ALTER TABLE do_logs ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
-    ALTER TABLE see_reviews ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
-EXCEPTION WHEN OTHERS THEN null;
-END $$;
-
 -- Indexes for high-frequency queries
 CREATE INDEX IF NOT EXISTS idx_plans_user_status ON plans (user_id, status);
 CREATE INDEX IF NOT EXISTS idx_plan_histories_plan ON plan_histories (plan_id, revision_number);
@@ -117,7 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_todos_due_completed ON todos (due_date, is_comple
 CREATE INDEX IF NOT EXISTS idx_do_logs_todo ON do_logs (todo_id);
 CREATE INDEX IF NOT EXISTS idx_see_reviews_plan ON see_reviews (plan_id);
 
--- 7. pgcrypto Key Derivation & Encryption Functions (Zero Client Secrets)
+-- 8. pgcrypto Key Derivation & Encryption Functions (Zero Client Secrets)
 CREATE OR REPLACE FUNCTION get_vault_key(p_uid UUID)
 RETURNS text AS $$
 BEGIN
@@ -149,7 +146,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- 8. Trigger Function: Snapshot Plan History on Update
+-- 9. Trigger Function: Snapshot Plan History on Update
 CREATE OR REPLACE FUNCTION fn_capture_plan_history()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -183,7 +180,7 @@ CREATE TRIGGER trg_capture_plan_history
     WHEN (OLD.* IS DISTINCT FROM NEW.*)
     EXECUTE FUNCTION fn_capture_plan_history();
 
--- 9. Row Level Security (RLS) Configuration & Public API Grants
+-- 10. Row Level Security (RLS) Configuration & Public API Grants
 -- Explicitly revoke access from anon to enforce HTTP 403/404 for unauthenticated requests
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon;
 
@@ -247,7 +244,7 @@ CREATE POLICY rls_see_reviews_auth ON see_reviews
     USING (user_id = auth.uid())
     WITH CHECK (user_id = auth.uid());
 
--- 10. Idempotent Todo Completion Function
+-- 11. Idempotent Todo Completion Function
 CREATE OR REPLACE FUNCTION complete_todo_idempotent(
     p_todo_id UUID,
     p_token VARCHAR,
@@ -295,7 +292,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 11. User Data Purge Function (Full Reset for active user only)
+-- 12. User Data Purge Function (Full Reset for active user only)
 CREATE OR REPLACE FUNCTION purge_user_data()
 RETURNS json AS $$
 DECLARE
@@ -320,7 +317,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 12. Automated Cascading Deletion Trigger (T07-C134)
+-- 13. Automated Cascading Deletion Trigger (T07-C134)
 CREATE OR REPLACE FUNCTION public.trigger_cascade_user_deletion()
 RETURNS TRIGGER AS $$
 BEGIN
