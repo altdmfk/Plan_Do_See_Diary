@@ -18,12 +18,6 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
-DO $$ BEGIN
-    CREATE TYPE persona_scope AS ENUM ('scope_a', 'scope_b');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
 -- 2. Create Plans Table
 CREATE TABLE IF NOT EXISTS plans (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -105,10 +99,23 @@ CREATE TABLE IF NOT EXISTS see_reviews (
     created_at TIMESTAMPTZ NOT NULL DEFAULT (now() AT TIME ZONE 'utc')
 );
 
+-- Migration safety: ensure user_id column exists if table pre-existed
+DO $$ BEGIN
+    ALTER TABLE plans ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE plan_histories ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE todos ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE do_logs ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
+    ALTER TABLE see_reviews ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN OTHERS THEN null;
+END $$;
+
 -- Indexes for high-frequency queries
-CREATE INDEX IF NOT EXISTS idx_plans_user_scope_status ON plans (user_id, scope, status);
+CREATE INDEX IF NOT EXISTS idx_plans_user_status ON plans (user_id, status);
 CREATE INDEX IF NOT EXISTS idx_plan_histories_plan ON plan_histories (plan_id, revision_number);
+CREATE INDEX IF NOT EXISTS idx_todos_plan ON todos (plan_id);
 CREATE INDEX IF NOT EXISTS idx_todos_due_completed ON todos (due_date, is_completed);
+CREATE INDEX IF NOT EXISTS idx_do_logs_todo ON do_logs (todo_id);
+CREATE INDEX IF NOT EXISTS idx_see_reviews_plan ON see_reviews (plan_id);
 
 -- 7. pgcrypto Key Derivation & Encryption Functions (Zero Client Secrets)
 CREATE OR REPLACE FUNCTION get_vault_key(p_uid UUID)
@@ -124,7 +131,6 @@ BEGIN
     IF p_text IS NULL OR trim(p_text) = '' THEN
         RETURN p_text;
     END IF;
-    -- Uses standard AES symmetric cipher via PostgreSQL pgcrypto
     RETURN encode(pgp_sym_encrypt(p_text, get_vault_key(p_uid)), 'base64');
 END;
 $$ LANGUAGE plpgsql STABLE;
@@ -138,7 +144,7 @@ BEGIN
     BEGIN
         RETURN pgp_sym_decrypt(decode(p_ciphertext, 'base64'), get_vault_key(p_uid));
     EXCEPTION WHEN OTHERS THEN
-        RETURN p_ciphertext; -- Fallback if plaintext
+        RETURN p_ciphertext;
     END;
 END;
 $$ LANGUAGE plpgsql STABLE;
@@ -185,41 +191,61 @@ GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 
+-- Enable RLS on all tables
 ALTER TABLE plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE plan_histories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE do_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE see_reviews ENABLE ROW LEVEL SECURITY;
 
+-- Clean up any legacy or permissive policies
+DROP POLICY IF EXISTS "Public access" ON plans;
+DROP POLICY IF EXISTS "Allow all" ON plans;
+DROP POLICY IF EXISTS "Enable read access for all users" ON plans;
+DROP POLICY IF EXISTS "Enable insert for authenticated users only" ON plans;
 DROP POLICY IF EXISTS rls_plans_auth ON plans;
+
+DROP POLICY IF EXISTS "Public access" ON plan_histories;
+DROP POLICY IF EXISTS "Allow all" ON plan_histories;
+DROP POLICY IF EXISTS rls_plan_histories_auth ON plan_histories;
+
+DROP POLICY IF EXISTS "Public access" ON todos;
+DROP POLICY IF EXISTS "Allow all" ON todos;
+DROP POLICY IF EXISTS rls_todos_auth ON todos;
+
+DROP POLICY IF EXISTS "Public access" ON do_logs;
+DROP POLICY IF EXISTS "Allow all" ON do_logs;
+DROP POLICY IF EXISTS rls_do_logs_auth ON do_logs;
+
+DROP POLICY IF EXISTS "Public access" ON see_reviews;
+DROP POLICY IF EXISTS "Allow all" ON see_reviews;
+DROP POLICY IF EXISTS rls_see_reviews_auth ON see_reviews;
+
+-- Strict User-Isolation Policies (FOR ALL covers SELECT, INSERT, UPDATE, DELETE)
 CREATE POLICY rls_plans_auth ON plans
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() )
-    WITH CHECK (user_id = auth.uid() );
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 
-DROP POLICY IF EXISTS rls_plan_histories_auth ON plan_histories;
 CREATE POLICY rls_plan_histories_auth ON plan_histories
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() )
-    WITH CHECK (user_id = auth.uid() );
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 
-DROP POLICY IF EXISTS rls_todos_auth ON todos;
 CREATE POLICY rls_todos_auth ON todos
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() )
-    WITH CHECK (user_id = auth.uid() );
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 
-DROP POLICY IF EXISTS rls_do_logs_auth ON do_logs;
 CREATE POLICY rls_do_logs_auth ON do_logs
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() )
-    WITH CHECK (user_id = auth.uid() );
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 
-DROP POLICY IF EXISTS rls_see_reviews_auth ON see_reviews;
 CREATE POLICY rls_see_reviews_auth ON see_reviews
     FOR ALL TO authenticated
-    USING (user_id = auth.uid() )
-    WITH CHECK (user_id = auth.uid() );
+    USING (user_id = auth.uid())
+    WITH CHECK (user_id = auth.uid());
 
 -- 10. Idempotent Todo Completion Function
 CREATE OR REPLACE FUNCTION complete_todo_idempotent(
@@ -242,7 +268,7 @@ BEGIN
 
     SELECT * INTO v_todo FROM todos WHERE id = p_todo_id AND user_id = v_uid;
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Todo not found in current scope or unauthorized' USING ERRCODE = '42501';
+        RAISE EXCEPTION 'Todo not found or unauthorized' USING ERRCODE = '42501';
     END IF;
 
     INSERT INTO do_logs (
@@ -269,7 +295,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 11. Scope Purge Function (Full Reset for active persona only)
+-- 11. User Data Purge Function (Full Reset for active user only)
 CREATE OR REPLACE FUNCTION purge_user_data()
 RETURNS json AS $$
 DECLARE

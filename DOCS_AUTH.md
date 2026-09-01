@@ -288,3 +288,19 @@ All password inputs use `type="password"`. Raw password strings are:
 - Prior to the user partitioning fix (Section 16), client databases were saved under the unpartitioned global key `pds_db_v2_`.
 - Starting from this update, client storage keys are strictly isolated per account (`pds_db_v2_<userId>`).
 - To test with completely fresh data, previous unpartitioned legacy test data in the browser can be cleared by clicking **로그?�웃(Logout)** or executing `localStorage.clear()` in the browser developer tools.
+
+## 18. Strict Supabase PostgreSQL RLS Policy Enforcement & Cross-Account Isolation
+
+### Root Cause of Cross-Account Data Leak
+- **Missing / Failing RLS Migration Execution:** If `schema.sql` previously contained non-existent column index references (such as `(user_id, scope, status)`), executing the script in the Supabase SQL editor stopped prematurely on error before activating `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and applying `CREATE POLICY ... USING (user_id = auth.uid())`. Without RLS active on the cloud database, PostgREST returned all rows in the tables to all authenticated callers.
+
+### Comprehensive Fix Implementation
+1. **Hardened PostgreSQL Schema (`schema.sql`):**
+   - Stripped all obsolete column references from table definitions, indexes, and triggers.
+   - Added migration safety checks (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT auth.uid() REFERENCES auth.users(id) ON DELETE CASCADE`) to automatically heal pre-existing tables.
+2. **Explicit Row Level Security (RLS) Policies:**
+   - Enabled RLS across all 5 core tables (`plans`, `todos`, `do_logs`, `see_reviews`, `plan_histories`).
+   - Cleaned up any permissive/legacy policies (`DROP POLICY IF EXISTS "Public access"`, etc.).
+   - Established strict `FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())` policies guaranteeing that `SELECT`, `INSERT`, `UPDATE`, and `DELETE` queries are strictly constrained by the caller's JWT `auth.uid()`.
+3. **Client-Side Partitioning & Verification:**
+   - Validated that client data layers (`js/supabaseClient.js`, `js/api.js`) isolate cache storage by `user_id` and cleanly wipe in-memory state on session switches.
