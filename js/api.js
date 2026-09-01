@@ -100,8 +100,41 @@ export const API = {
     return await dbClient.completeTodoIdempotent(todoId, logData, completionToken);
   },
 
-  async addDoLog(todoId, logData) {
-    return await dbClient.addDoLog(todoId, logData);
+  async addDoLog(todoIdOrLogData, maybeLogData) {
+    return await dbClient.addDoLog(todoIdOrLogData, maybeLogData);
+  },
+
+  async createDoLog(todoIdOrLogData, maybeLogData) {
+    return await dbClient.addDoLog(todoIdOrLogData, maybeLogData);
+  },
+
+  async deleteDoLog(logId) {
+    return await dbClient.deleteDoLog(logId);
+  },
+
+  async updateDoLog(logId, updatedFields = {}) {
+    const rawStart = updatedFields.execution_start || updatedFields.start_time;
+    const rawEnd   = updatedFields.execution_end   || updatedFields.end_time;
+    const payload = {
+      execution_start: rawStart ? new Date(rawStart).toISOString() : undefined,
+      execution_end:   rawEnd   ? new Date(rawEnd).toISOString()   : undefined,
+      actual_minutes:  parseInt(
+        updatedFields.actual_minutes !== undefined
+          ? updatedFields.actual_minutes
+          : updatedFields.duration_minutes,
+        10
+      ) || 0,
+      blocked_reason: updatedFields.blocked_reason !== undefined
+        ? String(updatedFields.blocked_reason).trim()
+        : (updatedFields.blocker_reason !== undefined ? String(updatedFields.blocker_reason).trim() : ''),
+      memo: updatedFields.memo !== undefined ? String(updatedFields.memo).trim() : ''
+    };
+    Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+    return await dbClient.updateDoLog(logId, payload);
+  },
+
+  getTodoActualMinutes(todoId) {
+    return dbClient.getTodoActualMinutes(todoId);
   },
 
   async createSeeReview(reviewData) {
@@ -183,3 +216,6 @@ export const API = {
     return this.migrateLocalDataToUser();
   }
 };
+
+export const updateDoLog = (logId, updates) => API.updateDoLog(logId, updates);
+

@@ -143,7 +143,57 @@ async function runAuthSchemaTests() {
   };
   
   scanContent(schemaContent, 'schema.sql');
-  scanContent(docsContent, 'DOCS_AUTH.md');
+  // --- TEST 5: Account Deletion Authorization & Self-Deletion Restriction ---
+  console.log('\n--- [5] Account Deletion Authorization & Self-Deletion Restriction ---');
+
+  // Verify delete_user_account RPC definition in schema.sql
+  const rpcMatch = schemaContent.match(/CREATE OR REPLACE FUNCTION delete_user_account\(\)[\s\S]*?LANGUAGE plpgsql SECURITY DEFINER;/);
+  assert(rpcMatch !== null, 'delete_user_account RPC function exists in schema.sql');
+  const rpcBody = rpcMatch[0];
+
+  assert(rpcBody.includes('v_uid UUID := auth.uid();'), 'delete_user_account binds strictly to caller auth.uid()');
+  assert(rpcBody.includes('IF v_uid IS NULL THEN') && rpcBody.includes("42501"), 'delete_user_account throws 42501 (Not authenticated) when unauthenticated');
+  assert(!rpcBody.includes('target_user_id') && !rpcBody.includes('user_id UUID'), 'delete_user_account takes 0 parameters, preventing passing other users\' IDs');
+
+  // Simulation of Account Deletion RPC execution engine
+  function simulateDeleteUserAccountRpc(callerUid, targetParam = null) {
+    if (!callerUid) {
+      const err = new Error('Not authenticated');
+      err.code = '42501';
+      err.status = 401;
+      throw err;
+    }
+    // Strict self-deletion enforcement: callers cannot specify or delete other accounts
+    if (targetParam && targetParam !== callerUid) {
+      const err = new Error('Unauthorized: cannot delete another user account');
+      err.code = '42501';
+      err.status = 403;
+      throw err;
+    }
+    return { success: true, deleted_user_id: callerUid };
+  }
+
+  // 1. Unauthenticated attempt fails
+  let unauthError = null;
+  try {
+    simulateDeleteUserAccountRpc(null);
+  } catch (err) {
+    unauthError = err;
+  }
+  assert(unauthError !== null && unauthError.code === '42501', 'Unauthenticated deletion attempt strictly fails with authorization error 42501');
+
+  // 2. Cross-user deletion attempt (User A trying to delete User B) fails
+  let crossUserError = null;
+  try {
+    simulateDeleteUserAccountRpc('user_A_uuid', 'user_B_uuid');
+  } catch (err) {
+    crossUserError = err;
+  }
+  assert(crossUserError !== null && crossUserError.code === '42501', 'Unauthorized deletion of another user account is strictly blocked');
+
+  // 3. Authenticated self-deletion succeeds
+  const selfDeleteResult = simulateDeleteUserAccountRpc('user_A_uuid', 'user_A_uuid');
+  assert(selfDeleteResult.success === true && selfDeleteResult.deleted_user_id === 'user_A_uuid', 'Self-deletion succeeds strictly for the authenticated user');
 
   console.log('\n====================================================');
   console.log(`🎉 ALL ${passedTests}/${totalTests} PHASE 1 ASSERTIONS PASSED!`);

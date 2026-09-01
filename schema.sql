@@ -335,3 +335,19 @@ CREATE TRIGGER trg_cascade_user_deletion
     AFTER DELETE ON auth.users
     FOR EACH ROW
     EXECUTE FUNCTION public.trigger_cascade_user_deletion();
+
+-- 14. Permanent User Account Deletion Function (T08 Real Backend Purge)
+CREATE OR REPLACE FUNCTION delete_user_account()
+RETURNS json AS $$
+DECLARE
+    v_uid UUID := auth.uid();
+BEGIN
+    IF v_uid IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
+    END IF;
+
+    DELETE FROM auth.users WHERE id = v_uid;
+
+    RETURN json_build_object('success', true);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

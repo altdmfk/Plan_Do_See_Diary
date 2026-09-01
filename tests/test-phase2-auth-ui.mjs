@@ -30,7 +30,12 @@ global.localStorage = (() => {
     clear: () => { store = {}; }
   };
 })();
-global.window = { __PDS_SUPABASE_URL: '', __PDS_SUPABASE_KEY: '' };
+global.window = {
+  __PDS_SUPABASE_URL: '',
+  __PDS_SUPABASE_KEY: '',
+  addEventListener: () => {},
+  removeEventListener: () => {}
+};
 Object.defineProperty(globalThis.crypto, 'randomUUID', {
   value: () => `test-${Math.random().toString(36).slice(2)}`,
   writable: true,
@@ -38,10 +43,32 @@ Object.defineProperty(globalThis.crypto, 'randomUUID', {
 });
 global.fetch = async () => ({ ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) });
 
+global.document = {
+  getElementById: (id) => ({
+    id,
+    innerHTML: '',
+    textContent: '',
+    value: '',
+    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    focus: () => {}
+  }),
+  documentElement: {
+    setAttribute: () => {},
+    getAttribute: () => null
+  },
+  querySelectorAll: () => [],
+  activeElement: null
+};
+
 // Dynamically import modules after globals are set
 const { CONFIG } = await import('../js/config.js');
 const { authClient } = await import('../js/auth.js');
 const { API } = await import('../js/api.js');
+const { appState } = await import('../js/state.js');
+const { renderDoColumn, escapeHtml } = await import('../js/ui.js');
 const { migrateLegacySchema, validateImportPayload } = await import('../js/validators.js');
 
 async function runPhase2Tests() {
@@ -223,6 +250,44 @@ async function runPhase2Tests() {
     assert(!rawJwtPattern.test(content), `No raw unmasked JWT token found in ${filename} (T07-C46)`);
     assert(!hardcodedKeyPattern.test(content), `No hardcoded service role key in ${filename} (T07-C113)`);
   }
+
+  // ----------------------------------------------------------------
+  // TEST 11: User-Scoped Theme Persistence
+  // ----------------------------------------------------------------
+  console.log('\n--- [11] User-Scoped Theme Persistence ---');
+
+  authClient.session = { access_token: 'fake_jwt', refresh_token: 'r', expires_at: Date.now() + 3600000, user: { id: 'usr-isolated-777', email: 'iso@test.com' } };
+  appState.setTheme('forest-green');
+  assert(localStorage.getItem('pds_theme_usr-isolated-777') === 'forest-green', 'Theme preference stored under user-scoped key pds_theme_<uid>');
+  assert(localStorage.getItem('pds_theme_pref') === 'forest-green', 'Global fallback theme pref also updated');
+
+  // ----------------------------------------------------------------
+  // TEST 12: Modal Focus Trap & Keyboard Navigation
+  // ----------------------------------------------------------------
+  console.log('\n--- [12] Modal Focus Trap & Keyboard Navigation ---');
+
+  const uiJsPath = path.resolve('js/ui.js');
+  const uiJsContent = fs.readFileSync(uiJsPath, 'utf-8');
+  assert(uiJsContent.includes('handleKeydown') && uiJsContent.includes('Escape') && uiJsContent.includes('Enter'), 'Dirty confirm modal implements explicit Escape and Enter keydown handlers');
+  assert(uiJsContent.includes('previousActiveElement') && uiJsContent.includes('previousActiveElement.focus()'), 'Dirty confirm modal restores previous active focus upon dismissal');
+
+  // ----------------------------------------------------------------
+  // TEST 13: Execution Memo Logs Persistence & Rendering
+  // ----------------------------------------------------------------
+  console.log('\n--- [13] Execution Memo Logs Persistence & Rendering ---');
+
+  assert(typeof API.createDoLog === 'function' && typeof API.addDoLog === 'function', 'API exposes createDoLog and addDoLog methods for logging execution memo');
+  
+  const testTodo = [{ id: 'todo-101', title: 'Test Task with Memo', priority: 'high', due_date: '2026-08-31', estimated_minutes: 60, is_completed: false }];
+  const testLogs = [{ todo_id: 'todo-101', actual_minutes: 45, memo: 'Completed code review with performance benchmarks', execution_start: '2026-08-31T09:00:00Z', execution_end: '2026-08-31T09:45:00Z' }];
+  let capturedHtml = '';
+  global.document.getElementById = (id) => {
+    if (id === 'doColBody') return { set innerHTML(val) { capturedHtml = val; }, get innerHTML() { return capturedHtml; } };
+    return { textContent: '' };
+  };
+  renderDoColumn(testTodo, testLogs, { id: 'p1' });
+  assert(capturedHtml.includes('Completed code review with performance benchmarks'), 'renderDoColumn renders execution log memo text in the UI');
+  assert(capturedHtml.includes('45분') || capturedHtml.includes('45min'), 'renderDoColumn renders duration minutes');
 
   // ----------------------------------------------------------------
   // SUMMARY

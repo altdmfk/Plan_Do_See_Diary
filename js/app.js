@@ -1,3 +1,26 @@
+// --- PERSISTENT REMEMBERED EMAIL HELPERS (localStorage) ---
+export function getSavedEmail() {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    return localStorage.getItem('remembered_email') || localStorage.getItem('saved_email') || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+export function setSavedEmail(email) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (email && email.trim()) {
+      const val = email.trim();
+      localStorage.setItem('remembered_email', val);
+      localStorage.setItem('saved_email', val);
+    } else {
+      localStorage.removeItem('remembered_email');
+      localStorage.removeItem('saved_email');
+    }
+  } catch (err) {}
+}
 
 // --- APP VISIBILITY ORCHESTRATOR ---
 export function updateAppVisibility(isAuthenticated) {
@@ -7,12 +30,25 @@ export function updateAppVisibility(isAuthenticated) {
   const filterBar = document.querySelector('.board-filter-bar');
   const mobileNav = document.getElementById('mobileBottomNav');
   const userEmailBadge = document.getElementById('userEmailBadge');
+  const authEmail = document.getElementById('authEmail');
+  const rememberEmailChk = document.getElementById('remember-email');
 
   if (authOverlay) authOverlay.hidden = Boolean(isAuthenticated);
   if (mainBoard) mainBoard.style.display = isAuthenticated ? '' : 'none';
   if (headerEl) headerEl.style.display = isAuthenticated ? '' : 'none';
   if (filterBar) filterBar.style.display = isAuthenticated ? '' : 'none';
   if (mobileNav) mobileNav.style.display = isAuthenticated ? '' : 'none';
+
+  if (!isAuthenticated) {
+    // Reliably restore persistent remembered email when login view is visible
+    try {
+      const savedEmail = getSavedEmail();
+      if (savedEmail && authEmail) {
+        authEmail.value = savedEmail;
+        if (rememberEmailChk) rememberEmailChk.checked = true;
+      }
+    } catch (err) {}
+  }
 
   if (userEmailBadge) {
     const email = authClient.getUserEmail();
@@ -40,6 +76,8 @@ import { authClient } from './auth.js';
 import {
   escapeHtml,
   showToast,
+  showLoading,
+  hideLoading,
   modalManager,
   setupAutoTextarea,
   updateFaviconAndBrand,
@@ -87,18 +125,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   appState.subscribe(onStateChange);
 
   // Initialize data store if authenticated
-  if (authClient.isAuthenticated()) {
+  const initialSession = await authClient.getSession();
+  if (initialSession && authClient.isAuthenticated()) {
+    showLoading(i18n.getLang() === 'ko' ? '데이터를 불러오는 중입니다...' : 'Loading data...');
     try {
+      updateAppVisibility(true);
       await appState.init();
     } catch (err) {
       if (err.status === 401 || (err.message && err.message.includes('401'))) {
-        console.warn('Session expired or invalid, forcing logout');
         authClient.clearSession();
         API.clearSession();
-        appState.clearAll();
+        appState.resetGlobalState();
         updateAppVisibility(false);
       }
+    } finally {
+      hideLoading();
     }
+  } else {
+    updateAppVisibility(false);
+  }
+
+  // Isolated session management for current tab
+  if (typeof authClient !== 'undefined' && typeof authClient.onAuthStateChange === 'function') {
+    authClient.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        API.clearSession();
+        appState.resetGlobalState();
+        modalManager.closeAll();
+        updateAppVisibility(false);
+      }
+    });
   }
 });
 
@@ -108,56 +164,199 @@ function bindAuthForms() {
   const authEmail = document.getElementById('authEmail');
   const authPassword = document.getElementById('authPassword');
   const authErrorMsg = document.getElementById('authErrorMsg');
+  const authForm = document.getElementById('authForm');
+  const rememberEmailChk = document.getElementById('remember-email');
+  const authLoginTabBtn = document.getElementById('authLoginTabBtn');
+  const authSignupTabBtn = document.getElementById('authSignupTabBtn');
+  let currentAuthMode = 'login';
+  let isSubmittingAuth = false;
+
+  const setAuthMode = (mode) => {
+    currentAuthMode = mode;
+    clearAuthError();
+    if (mode === 'login') {
+      authLoginTabBtn?.classList.add('active');
+      if (authLoginTabBtn) {
+        authLoginTabBtn.style.borderBottomColor = 'var(--color-primary)';
+        authLoginTabBtn.style.color = 'var(--color-primary)';
+        authLoginTabBtn.style.fontWeight = '700';
+      }
+      authSignupTabBtn?.classList.remove('active');
+      if (authSignupTabBtn) {
+        authSignupTabBtn.style.borderBottomColor = 'transparent';
+        authSignupTabBtn.style.color = 'var(--color-text-muted)';
+        authSignupTabBtn.style.fontWeight = '600';
+      }
+      if (loginBtn) {
+        loginBtn.className = 'btn btn-primary';
+        loginBtn.type = 'submit';
+      }
+      if (signupBtn) {
+        signupBtn.className = 'btn btn-secondary';
+        signupBtn.type = 'button';
+      }
+    } else {
+      authSignupTabBtn?.classList.add('active');
+      if (authSignupTabBtn) {
+        authSignupTabBtn.style.borderBottomColor = 'var(--color-primary)';
+        authSignupTabBtn.style.color = 'var(--color-primary)';
+        authSignupTabBtn.style.fontWeight = '700';
+      }
+      authLoginTabBtn?.classList.remove('active');
+      if (authLoginTabBtn) {
+        authLoginTabBtn.style.borderBottomColor = 'transparent';
+        authLoginTabBtn.style.color = 'var(--color-text-muted)';
+        authLoginTabBtn.style.fontWeight = '600';
+      }
+      if (loginBtn) {
+        loginBtn.className = 'btn btn-secondary';
+        loginBtn.type = 'button';
+      }
+      if (signupBtn) {
+        signupBtn.className = 'btn btn-primary';
+        signupBtn.type = 'submit';
+      }
+    }
+  };
+
+  authLoginTabBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    setAuthMode('login');
+    authEmail?.focus();
+  });
+
+  authSignupTabBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    setAuthMode('signup');
+    authEmail?.focus();
+  });
+
+  // Restore saved email on page load
+  const savedEmail = getSavedEmail();
+  if (savedEmail && authEmail) {
+    authEmail.value = savedEmail;
+    if (rememberEmailChk) rememberEmailChk.checked = true;
+  }
+
+  rememberEmailChk?.addEventListener('change', () => {
+    if (rememberEmailChk.checked) {
+      if (authEmail?.value?.trim()) {
+        setSavedEmail(authEmail.value.trim());
+      }
+    } else {
+      setSavedEmail(null);
+    }
+  });
+
+  const clearAuthError = () => {
+    if (authErrorMsg) authErrorMsg.textContent = '';
+  };
+
+  authEmail?.addEventListener('input', () => {
+    clearAuthError();
+  });
+  authPassword?.addEventListener('input', clearAuthError);
 
   const handleAuth = async (action) => {
+    if (isSubmittingAuth) return;
     const email = authEmail.value;
     const password = authPassword.value;
     if (!email || !password) {
-      authErrorMsg.textContent = 'Please enter email and password';
+      authErrorMsg.style.color = 'var(--color-danger)';
+      authErrorMsg.textContent = i18n.getLang() === 'ko' ? '이메일과 비밀번호를 입력해주세요.' : 'Please enter email and password';
+      return;
+    }
+
+    if (action === 'signup' && password.length < 6) {
+      authErrorMsg.style.color = 'var(--color-danger)';
+      authErrorMsg.textContent = '비밀번호는 최소 6자 이상이어야 합니다.';
       return;
     }
     
+    isSubmittingAuth = true;
     loginBtn.disabled = true;
     signupBtn.disabled = true;
-    authErrorMsg.textContent = '';
+    clearAuthError();
     
     try {
       if (action === 'login') {
-        await authClient.login(email, password);
-      } else {
-        await authClient.signup(email, password);
-        authErrorMsg.style.color = 'var(--color-primary)';
-        authErrorMsg.textContent = 'Account created successfully!';
-        setTimeout(() => {}, 1500);
-      }
-      
-      // On success, show app
-      updateAppVisibility(true);
-      await appState.init();
-      authEmail.value = '';
-      authPassword.value = '';
+        showLoading(i18n.getLang() === 'ko' ? '로그인 처리 중입니다...' : 'Signing in...');
+        const result = await authClient.login(email, password);
+        if (result && (result.code || result.error_code || !result.success)) {
+          hideLoading();
+          authErrorMsg.style.color = 'var(--color-danger)';
+          authErrorMsg.textContent = result.msg || '아이디 또는 비밀번호가 올바르지 않습니다.';
+          return;
+        }
+        // Strictly await session persistence before mounting and fetching data
+        await authClient.getSession();
 
-      // T07-C100: Prompt migration if local T06 data exists
-      const localKey = 'pds_db_v2_scope_a';
-      const hasLocalData = typeof localStorage !== 'undefined' && localStorage.getItem(localKey);
-      if (hasLocalData) {
-        modalManager.open('migrationModal');
+        if (rememberEmailChk && rememberEmailChk.checked) {
+          setSavedEmail(email.trim());
+        } else {
+          setSavedEmail(null);
+        }
+        // Flush previous user data before fetching fresh state
+        appState.resetGlobalState();
+        API.clearSession();
+        updateAppVisibility(true);
+        initTheme();
+        await appState.init();
+        authEmail.value = '';
+        authPassword.value = '';
+
+        // Prompt migration if local T06 data exists
+        const localKey = 'pds_db_v2_scope_a';
+        const hasLocalData = typeof localStorage !== 'undefined' && localStorage.getItem(localKey);
+        if (hasLocalData) {
+          modalManager.open('migrationModal');
+        }
+      } else if (action === 'signup') {
+        showLoading(i18n.getLang() === 'ko' ? '회원가입 처리 중입니다...' : 'Creating account...');
+        const result = await authClient.signup(email, password);
+        if (result && (result.code || result.error_code || !result.success)) {
+          hideLoading();
+          authErrorMsg.style.color = 'var(--color-danger)';
+          authErrorMsg.textContent = result.msg || '회원가입 처리 중 오류가 발생했습니다.';
+          return;
+        }
+
+        if (authPassword) authPassword.value = '';
+        authErrorMsg.style.color = 'var(--color-primary)';
+        authErrorMsg.textContent = i18n.getLang() === 'ko' ? '계정이 생성되었습니다. 로그인해 주세요.' : 'Account created successfully. Please log in.';
+        setTimeout(() => {
+          if (authErrorMsg && (authErrorMsg.textContent.includes('생성') || authErrorMsg.textContent.includes('created'))) authErrorMsg.textContent = '';
+        }, 4000);
+        setAuthMode('login');
       }
     } catch (e) {
       authErrorMsg.style.color = 'var(--color-danger)';
-      authErrorMsg.textContent = 'Invalid login credentials'; // T07-C99 Uniform Error
+      authErrorMsg.textContent = e?.msg || e?.message || '처리 중 오류가 발생했습니다.';
     } finally {
+      hideLoading();
+      isSubmittingAuth = false;
       loginBtn.disabled = false;
       signupBtn.disabled = false;
     }
   };
 
-  loginBtn.addEventListener('click', (e) => { e.preventDefault(); handleAuth('login'); });
-  signupBtn.addEventListener('click', (e) => { e.preventDefault(); handleAuth('signup'); });
+  if (authForm) {
+    authForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      handleAuth(currentAuthMode);
+    });
+  }
+
+  loginBtn?.addEventListener('click', (e) => { e.preventDefault(); clearAuthError(); handleAuth('login'); });
+  signupBtn?.addEventListener('click', (e) => { e.preventDefault(); clearAuthError(); handleAuth('signup'); });
 }
 
 function initTheme() {
-  const currentTheme = appState.getState().theme;
+  const uid = typeof authClient !== 'undefined' && typeof authClient.getUserId === 'function' ? authClient.getUserId() : null;
+  const userSavedTheme = uid && typeof localStorage !== 'undefined' ? localStorage.getItem(`pds_theme_${uid}`) : null;
+  const globalSavedTheme = typeof localStorage !== 'undefined' ? (localStorage.getItem('pds_theme_pref') || localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME)) : null;
+  const currentTheme = userSavedTheme || globalSavedTheme || appState.getState().theme || CONFIG.DEFAULT_THEME;
+  appState.setTheme(currentTheme);
   document.documentElement.setAttribute('data-theme', currentTheme);
   updateThemeButtons(currentTheme);
   updateFaviconAndBrand(currentTheme);
@@ -176,29 +375,70 @@ function setupAutoExpandingTextareas() {
 
 // --- STATE SYNCHRONIZATION ---
 function onStateChange(state) {
+  if (!state) return;
+
+  if (state.loading) {
+    showLoading();
+  } else {
+    hideLoading();
+  }
+
+  const plans = state.plans || [];
+  const todos = state.todos || [];
+  const do_logs = state.do_logs || [];
+  const see_reviews = state.see_reviews || state.reviews || [];
+  const filters = state.filters || {};
+
   // Update Active Plan Selector in Filter Bar
   const planSelect = document.getElementById('planSelectFilter');
   if (planSelect) {
-    const currentVal = state.filters.planId || state.selectedPlanId || '';
-    planSelect.innerHTML = `<option value="">${i18n.t('allPlans')} (${state.plans.length})</option>` +
-      state.plans.map(p => `<option value="${p.id}" ${p.id === currentVal ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('');
+    const filterVal = filters.planId || '';
+    planSelect.innerHTML = `<option value="">${i18n.t('allPlans')} (${plans.length})</option>` +
+      plans.map(p => `<option value="${p.id}" ${p.id === filterVal ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('');
+    planSelect.value = filterVal;
   }
 
-  // Render Plan Column with search-filtered plans
-  const filteredPlans = appState.getFilteredPlans();
-  renderPlanColumn(filteredPlans, state.selectedPlanId);
+  // Update Plan Status & Priority Filter Dropdowns in Plan Column Header
+  const planStatusSelect = document.getElementById('planStatusFilter');
+  if (planStatusSelect && filters.planStatus !== undefined) {
+    planStatusSelect.value = filters.planStatus;
+  }
+  const planPrioritySelect = document.getElementById('planPriorityFilter');
+  if (planPrioritySelect && filters.planPriority !== undefined) {
+    planPrioritySelect.value = filters.planPriority;
+  }
+
+  // Render Plan Column with paginated plans, selected plan ID, all plans, and all todos
+  const paginatedPlans = appState.getPaginatedPlans();
+  renderPlanColumn(paginatedPlans, state.selectedPlanId, plans, todos);
 
   // Render Do Column with search/status/priority/tags filtered To Dos
   const filteredTodos = appState.getFilteredTodos();
-  const selectedPlan = state.plans.find(p => p.id === state.selectedPlanId);
-  renderDoColumn(filteredTodos, state.do_logs, selectedPlan, state.filters.tags || []);
+  const selectedPlan = plans.find(p => p.id === state.selectedPlanId);
+  renderDoColumn(filteredTodos, do_logs, selectedPlan, filters.tags || []);
 
   // Render See Column
   const metrics = appState.getKSTMetrics();
-  renderSeeColumn(metrics, selectedPlan, state.see_reviews);
+  renderSeeColumn(metrics, selectedPlan, see_reviews);
+
+  // Retrospective Action Guard: Disable "Write Retrospective" button when no corresponding "Do" entry exists
+  const reflectBtn = document.getElementById('colReflectBtn');
+  if (reflectBtn) {
+    const selectedPlanId = state.selectedPlanId;
+    const planTodos = selectedPlanId 
+      ? todos.filter(t => String(t.plan_id) === String(selectedPlanId))
+      : todos;
+    const hasDoEntry = planTodos.length > 0;
+    reflectBtn.disabled = !hasDoEntry;
+    if (!hasDoEntry) {
+      reflectBtn.title = i18n.getLang() === 'ko' ? '해당 계획에 등록된 할 일(Do)이 없어 회고를 작성할 수 없습니다.' : 'Cannot write retrospective: No Do entries exist for this plan.';
+    } else {
+      reflectBtn.title = '';
+    }
+  }
 
   // Update mobile nav state
-  updateMobileNavState(state.activeMobileTab);
+  updateMobileNavState(state.activeMobileTab || 'plan');
 }
 
 function updateMobileNavState(tab) {
@@ -251,7 +491,7 @@ function bindHeaderControls() {
   });
 
   // Export JSON Backup
-  document.getElementById('exportBtn').addEventListener('click', async () => {
+  document.getElementById('exportBtn')?.addEventListener('click', async () => {
     try {
       const backup = await API.exportBackup();
       const jsonStr = JSON.stringify(backup, null, 2);
@@ -269,101 +509,198 @@ function bindHeaderControls() {
   });
 
   // Import JSON Backup Modal
-  document.getElementById('importBtn').addEventListener('click', () => {
-    document.getElementById('importFileInput').value = '';
+  document.getElementById('importBtn')?.addEventListener('click', () => {
+    const importInput = document.getElementById('importFileInput');
+    if (importInput) importInput.value = '';
     modalManager.open('importModal');
   });
 
   // Reset Data Modal
-  document.getElementById('resetDataBtn').addEventListener('click', () => {
-    
-    
+  document.getElementById('resetDataBtn')?.addEventListener('click', () => {
     modalManager.open('resetModal');
   });
 
   // New Plan Header Button
-  document.getElementById('headerNewPlanBtn').addEventListener('click', openCreatePlanModal);
+  document.getElementById('headerNewPlanBtn')?.addEventListener('click', openCreatePlanModal);
 
-  // Logout (T07-C97)
-  document.getElementById('logoutBtn').addEventListener('click', async () => {
+  // Logout
+  document.getElementById('logoutBtn')?.addEventListener('click', async () => {
     await authClient.logout();
     API.clearSession();
     appState.clearAll();
     updateAppVisibility(false);
-    showToast('로그아웃되었습니다.', 'info');
+    showToast(i18n.getLang() === 'ko' ? '로그아웃되었습니다.' : 'Logged out successfully.', 'info');
   });
 
-  // Delete Account UI trigger (T07-C134)
-  document.getElementById('deleteAccountBtn').addEventListener('click', () => {
+  // Delete Account UI trigger
+  const deleteAccountInput = document.getElementById('deleteAccountInput');
+  const deleteAccountConfirmBtn = document.getElementById('deleteAccountConfirmBtn');
+
+  const checkDeletePhrase = () => {
+    const val = deleteAccountInput ? deleteAccountInput.value.trim() : '';
+    const localizedPhrase = i18n.t('deleteAccountConfirmPhrase');
+    const isValid = (val === localizedPhrase) || (val === '계정을 삭제하겠습니다.');
+    if (deleteAccountConfirmBtn) {
+      deleteAccountConfirmBtn.disabled = !isValid;
+    }
+  };
+
+  if (deleteAccountInput) {
+    deleteAccountInput.addEventListener('input', checkDeletePhrase);
+    deleteAccountInput.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && deleteAccountConfirmBtn && !deleteAccountConfirmBtn.disabled) {
+        e.preventDefault();
+        deleteAccountConfirmBtn.click();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+      }
+    });
+  }
+
+  const handleDeleteModalKeydown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('keydown', handleDeleteModalKeydown);
+      }
+      modalManager.close('deleteAccountModal');
+    }
+  };
+
+  document.getElementById('deleteAccountBtn')?.addEventListener('click', () => {
+    if (deleteAccountInput) {
+      deleteAccountInput.value = '';
+    }
+    if (deleteAccountConfirmBtn) {
+      deleteAccountConfirmBtn.disabled = true;
+    }
     modalManager.open('deleteAccountModal');
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', handleDeleteModalKeydown);
+    }
+    requestAnimationFrame(() => {
+      deleteAccountInput?.focus();
+    });
   });
-  document.getElementById('deleteAccountCancelBtn').addEventListener('click', () => {
+
+  document.getElementById('deleteAccountCancelBtn')?.addEventListener('click', () => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', handleDeleteModalKeydown);
+    }
     modalManager.close('deleteAccountModal');
   });
-  document.getElementById('deleteAccountConfirmBtn').addEventListener('click', async () => {
+
+  deleteAccountConfirmBtn?.addEventListener('click', async () => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', handleDeleteModalKeydown);
+    }
     modalManager.close('deleteAccountModal');
     try {
-      
+      showLoading(i18n.getLang() === 'ko' ? '계정 및 데이터를 영구 삭제하는 중입니다...' : 'Deleting account and data...');
+
+      // Step 1: Purge cloud data and user account
+      await API.purgeUserData();
+      if (typeof authClient.deleteAccount === 'function') {
+        await authClient.deleteAccount();
+      }
+
+      // Step 2: Sign out from Supabase Auth
       await authClient.logout();
-    API.clearSession();
-    appState.clearAll();
+
+      // Step 3: Force-close all modals via ModalManager
+      modalManager.closeAll();
+
+      // Step 4: Clear all in-memory state
+      API.clearSession();
+      appState.resetGlobalState();
+
+      // Step 5: Clear browser storage completely without preserving any fake purge markers
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.clear();
+      }
+      if (typeof localStorage !== 'undefined') {
+        const savedEmail = getSavedEmail();
+        const preserved = {
+          saved_email: savedEmail,
+          remembered_email: savedEmail,
+          pds_active_lang: localStorage.getItem('pds_active_lang'),
+          pds_theme_pref: localStorage.getItem('pds_theme_pref'),
+          [CONFIG.STORAGE_KEYS.ACTIVE_THEME]: localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME)
+        };
+        localStorage.clear();
+        Object.entries(preserved).forEach(([k, v]) => {
+          if (v) localStorage.setItem(k, v);
+        });
+      }
+
+      // Step 6: Reset UI to login screen
       updateAppVisibility(false);
-      showToast('계정이 삭제되었습니다.', 'success');
+      showToast(i18n.t('deleteAccountSuccess'), 'success');
     } catch (err) {
-      showToast('계정 삭제 중 오류가 발생했습니다.', 'error');
+      showToast(i18n.t('deleteAccountError'), 'error');
+    } finally {
+      hideLoading();
     }
   });
 
   // T06 Migration Modal
-  document.getElementById('migrationModalCloseBtn').addEventListener('click', () => {
+  document.getElementById('migrationModalCloseBtn')?.addEventListener('click', () => {
     modalManager.close('migrationModal');
   });
-  document.getElementById('migrationSkipBtn').addEventListener('click', () => {
+  document.getElementById('migrationSkipBtn')?.addEventListener('click', () => {
     modalManager.close('migrationModal');
   });
-  document.getElementById('migrationImportBtn').addEventListener('click', async () => {
+  document.getElementById('migrationImportBtn')?.addEventListener('click', async () => {
     try {
       await API.migrateLocalData();
       modalManager.close('migrationModal');
       await appState.init();
-      showToast('로컬 데이터가 계정으로 마이그레이션되었습니다.', 'success');
+      showToast(i18n.t('migrationSuccess'), 'success');
     } catch (err) {
-      showToast('마이그레이션 중 오류가 발생했습니다: ' + err.message, 'error');
+      showToast(i18n.t('importErrorPrefix') + err.message, 'error');
     }
   });
 }
 
 // --- FILTER CONTROLS ---
 function bindFilterControls() {
-  document.getElementById('planSelectFilter').addEventListener('change', (e) => {
+  document.getElementById('planSelectFilter')?.addEventListener('change', (e) => {
     const val = e.target.value || '';
+    showLoading();
     appState.setFilters({ planId: val });
     if (val) {
       appState.setSelectedPlan(val);
     }
+    requestAnimationFrame(() => {
+      hideLoading();
+    });
   });
 
   document.getElementById('planPriorityFilter')?.addEventListener('change', (e) => {
     appState.setFilters({ planPriority: e.target.value });
   });
 
+  document.getElementById('planStatusFilter')?.addEventListener('change', (e) => {
+    appState.setFilters({ planStatus: e.target.value });
+  });
+
   document.getElementById('planSortSelect')?.addEventListener('change', (e) => {
     appState.setFilters({ planSort: e.target.value });
   });
 
-  document.getElementById('searchInput').addEventListener('input', (e) => {
+  document.getElementById('searchInput')?.addEventListener('input', (e) => {
     appState.setFilters({ search: e.target.value });
   });
 
-  document.getElementById('priorityFilter').addEventListener('change', (e) => {
+  document.getElementById('priorityFilter')?.addEventListener('change', (e) => {
     appState.setFilters({ priority: e.target.value });
   });
 
-  document.getElementById('statusFilter').addEventListener('change', (e) => {
+  document.getElementById('statusFilter')?.addEventListener('change', (e) => {
     appState.setFilters({ status: e.target.value });
   });
 
-  document.getElementById('sortSelect').addEventListener('change', (e) => {
+  document.getElementById('sortSelect')?.addEventListener('change', (e) => {
     appState.setFilters({ sort: e.target.value });
   });
 
@@ -378,68 +715,124 @@ function bindFilterControls() {
 // --- BOARD & COLUMN ACTIONS (Click-to-Select on Plan Card & Multi-Tag Filtering) ---
 function bindBoardActions() {
   // Plan Column Actions
-  document.getElementById('colAddPlanBtn').addEventListener('click', openCreatePlanModal);
+  document.getElementById('colAddPlanBtn')?.addEventListener('click', openCreatePlanModal);
 
-  document.getElementById('planColBody').addEventListener('click', async (e) => {
-    // Empty state new plan button click
-    const emptyBtn = e.target.closest('#emptyStateNewPlanBtn');
-    if (emptyBtn) {
-      openCreatePlanModal();
-      return;
-    }
-
-    // Empty state load seed data button click
-    const loadSeedBtn = e.target.closest('#emptyStateLoadSeedBtn');
-    if (loadSeedBtn) {
-      try {
-        await API.populateSyntheticSeed();
-        await appState.refreshData();
-        const state = appState.getState();
-        if (state.plans.length > 0) {
-          appState.setSelectedPlan(state.plans[0].id);
-        }
-        showToast(i18n.t('loadExampleSuccess'), 'success');
-      } catch (err) {
-        showToast(err.message, 'error');
+  document.getElementById('planColBody')?.addEventListener('click', async (e) => {
+    try {
+      // Empty state new plan button click
+      const emptyBtn = e.target.closest('#emptyStateNewPlanBtn');
+      if (emptyBtn) {
+        openCreatePlanModal();
+        return;
       }
-      return;
-    }
 
-    const planCard = e.target.closest('.plan-card');
-    if (!planCard) return;
+      // Empty state load seed data button click
+      const loadSeedBtn = e.target.closest('#emptyStateLoadSeedBtn');
+      if (loadSeedBtn) {
+        try {
+          await API.populateSyntheticSeed();
+          await appState.refreshData();
+          const state = appState.getState();
+          if (state.plans.length > 0) {
+            appState.setSelectedPlan(state.plans[0].id);
+          }
+          showToast(i18n.t('loadExampleSuccess'), 'success');
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+        return;
+      }
 
-    const planId = planCard.dataset.planId;
-    const actionBtn = e.target.closest('button');
+      // Pagination button clicks
+      const pageBtn = e.target.closest('.plan-page-btn');
+      if (pageBtn && !pageBtn.disabled) {
+        const targetPage = parseInt(pageBtn.dataset.page, 10);
+        if (targetPage && !isNaN(targetPage)) {
+          appState.setPlanPage(targetPage);
+        }
+        return;
+      }
 
-    // If clicking action buttons inside the card
-    if (actionBtn) {
-      e.stopPropagation();
-      if (actionBtn.classList.contains('plan-history-btn')) {
-        openPlanHistoryModal(planId);
-      } else if (actionBtn.classList.contains('edit-plan-btn')) {
-        openEditPlanModal(planId);
-      } else if (actionBtn.classList.contains('delete-plan-btn')) {
-        if (confirm(i18n.getLang() === 'ko' ? '이 계획과 연결된 모든 할 일을 삭제하시겠습니까?' : 'Delete this plan and all associated To Dos?')) {
-          try {
-            await API.deletePlan(planId);
-            await appState.refreshData();
-            showToast(i18n.t('planDeleted'), 'info');
-          } catch (err) {
-            showToast(err.message, 'error');
+      const planCard = e.target.closest('.plan-card');
+      if (!planCard) return;
+
+      const planId = planCard.dataset.planId;
+      const actionBtn = e.target.closest('button');
+
+      // If clicking action buttons inside the card
+      if (actionBtn) {
+        e.stopPropagation();
+        if (planId) {
+          appState.setSelectedPlan(planId);
+        }
+        if (actionBtn.classList.contains('plan-history-btn')) {
+          openPlanHistoryModal(planId);
+        } else if (actionBtn.classList.contains('edit-plan-btn')) {
+          openEditPlanModal(planId, actionBtn);
+        } else if (actionBtn.classList.contains('delete-plan-btn')) {
+          if (confirm(i18n.getLang() === 'ko' ? '이 계획과 연결된 모든 할 일을 삭제하시겠습니까?' : 'Delete this plan and all associated To Dos?')) {
+            try {
+              // 1. Determine index of deleted plan in visible list before deletion
+              const currentList = appState.getFilteredPlans();
+              const deletedIndex = currentList.findIndex(p => String(p.id) === String(planId));
+
+              await API.deletePlan(planId);
+              await appState.refreshData();
+
+              // 2. Determine target adjacent plan to preserve selection and focus
+              const remainingList = appState.getFilteredPlans();
+              let targetPlanId = null;
+
+              if (remainingList.length > 0) {
+                if (deletedIndex >= 0 && deletedIndex < remainingList.length) {
+                  // Next sibling at the same index
+                  targetPlanId = remainingList[deletedIndex].id;
+                } else if (deletedIndex >= remainingList.length) {
+                  // Deleted item was last -> previous item (index - 1)
+                  targetPlanId = remainingList[remainingList.length - 1].id;
+                } else {
+                  targetPlanId = remainingList[0].id;
+                }
+              }
+
+              // 3. Update active plan selection state
+              appState.setSelectedPlan(targetPlanId);
+
+              // 4. Focus target element and ensure active styling
+              if (targetPlanId) {
+                requestAnimationFrame(() => {
+                  const newCard = document.querySelector(`.plan-card[data-plan-id="${targetPlanId}"]`);
+                  if (newCard) {
+                    if (!newCard.hasAttribute('tabindex')) {
+                      newCard.setAttribute('tabindex', '0');
+                    }
+                    newCard.focus();
+                  }
+                });
+              }
+
+              showToast(i18n.t('planDeleted'), 'info');
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
           }
         }
+        return;
       }
-      return;
-    }
 
-    // Direct card click selects the plan
-    appState.setSelectedPlan(planId);
+      // Direct card click selects the plan
+      if (planId) {
+        appState.setSelectedPlan(planId);
+      }
+    } catch (err) {
+      console.warn('planColBody click handler error:', err);
+    }
   });
 
   // Do Column Actions & Multi-Tag Filtering
-  document.getElementById('colAddTodoBtn').addEventListener('click', openCreateTodoModal);
+  document.getElementById('colAddTodoBtn')?.addEventListener('click', openCreateTodoModal);
 
-  document.getElementById('doColBody').addEventListener('click', async (e) => {
+  document.getElementById('doColBody')?.addEventListener('click', async (e) => {
     // Empty state new todo button click
     const emptyTodoBtn = e.target.closest('#emptyStateNewTodoBtn');
     if (emptyTodoBtn) {
@@ -450,6 +843,22 @@ function bindBoardActions() {
     // Clear all tags button
     if (e.target.classList.contains('clear-all-tags-btn')) {
       appState.clearTagFilters();
+      return;
+    }
+
+    // Delete individual execution log
+    const deleteLogBtn = e.target.closest('.delete-log-btn');
+    if (deleteLogBtn) {
+      const logId = deleteLogBtn.dataset.logId;
+      if (confirm(i18n.getLang() === 'ko' ? '이 실행 기록을 삭제하시겠습니까?' : 'Delete this execution log?')) {
+        try {
+          await API.deleteDoLog(logId);
+          await appState.refreshData();
+          showToast(i18n.getLang() === 'ko' ? '기록이 삭제되었습니다.' : 'Log deleted successfully.', 'info');
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      }
       return;
     }
 
@@ -524,10 +933,22 @@ function bindBoardActions() {
     }
   });
 
-  // See Column Actions
-  document.getElementById('colReflectBtn').addEventListener('click', openSeeReviewModal);
+  // Double-click execution log to edit record
+  document.getElementById('doColBody')?.addEventListener('dblclick', (e) => {
+    const logItem = e.target.closest('.todo-log-item');
+    if (logItem && !e.target.closest('.delete-log-btn')) {
+      const logId = logItem.dataset.logId;
+      const todoId = logItem.dataset.todoId;
+      if (todoId && logId) {
+        openExecLoggerModal(todoId, logId);
+      }
+    }
+  });
 
-  document.getElementById('seeColBody').addEventListener('click', (e) => {
+  // See Column Actions
+  document.getElementById('colReflectBtn')?.addEventListener('click', openSeeReviewModal);
+
+  document.getElementById('seeColBody')?.addEventListener('click', (e) => {
     if (e.target.id === 'advanceFeedbackLoopBtn' || e.target.closest('#advanceFeedbackLoopBtn')) {
       advanceFeedbackLoopToNextPlan();
     }
@@ -540,7 +961,8 @@ function bindPriorityPills() {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#planPriorityPills .priority-pill-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById('planPriorityInput').value = btn.dataset.priority;
+      const input = document.getElementById('planPriorityInput');
+      if (input) input.value = btn.dataset.priority;
     });
   });
 
@@ -548,14 +970,16 @@ function bindPriorityPills() {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#todoPriorityPills .priority-pill-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById('todoPriorityInput').value = btn.dataset.priority;
+      const input = document.getElementById('todoPriorityInput');
+      if (input) input.value = btn.dataset.priority;
     });
   });
 }
 
 function setPriorityPill(containerId, hiddenInputId, priority) {
   const p = priority || 'medium';
-  document.getElementById(hiddenInputId).value = p;
+  const hiddenInput = document.getElementById(hiddenInputId);
+  if (hiddenInput) hiddenInput.value = p;
   document.querySelectorAll(`#${containerId} .priority-pill-btn`).forEach(b => {
     b.classList.toggle('active', b.dataset.priority === p);
   });
@@ -603,10 +1027,10 @@ function bindInputValidations() {
   const planStart = document.getElementById('planStartInput');
   const planEnd = document.getElementById('planEndInput');
   const checkPlanDates = () => {
-    if (planStart.value && planEnd.value && planEnd.value < planStart.value) {
+    if (planStart && planEnd && planStart.value && planEnd.value && planEnd.value < planStart.value) {
       showToast(i18n.t('dateRangeError'), 'warning');
       planEnd.classList.add('input-invalid');
-    } else {
+    } else if (planEnd) {
       planEnd.classList.remove('input-invalid');
     }
   };
@@ -617,16 +1041,13 @@ function bindInputValidations() {
   const execStart = document.getElementById('execStartInput');
   const execEnd = document.getElementById('execEndInput');
   const checkExecTimes = () => {
-    if (execStart.value && execEnd.value) {
+    if (execStart && execEnd && execStart.value && execEnd.value) {
       const s = new Date(execStart.value).getTime();
       const en = new Date(execEnd.value).getTime();
-      if (en < s) {
-        showToast(i18n.t('timeRangeError'), 'warning');
-        execEnd.classList.add('input-invalid');
-      } else {
-        execEnd.classList.remove('input-invalid');
+      if (en >= s) {
         const diffMins = Math.max(1, Math.round((en - s) / 60000));
-        document.getElementById('execMinutesInput').value = diffMins;
+        const minEl = document.getElementById('execMinutesInput');
+        if (minEl) minEl.value = diffMins;
       }
     }
   };
@@ -636,11 +1057,29 @@ function bindInputValidations() {
 
 // --- MODALS & FORMS ---
 function bindModalForms() {
+  // Prevent unintended Enter submissions inside single-line inputs across all modal forms
+  ['planForm', 'todoForm', 'execForm', 'seeForm'].forEach(formId => {
+    const form = document.getElementById(formId);
+    if (!form) return;
+    form.addEventListener('keydown', (e) => {
+      try {
+        if (e.key === 'Enter') {
+          const isModifier = e.ctrlKey || e.metaKey;
+          const targetTag = e.target?.tagName?.toLowerCase();
+          const isSearch = e.target?.type === 'search' || (e.target?.id && e.target.id.toLowerCase().includes('search'));
+          if (targetTag === 'input' && !isModifier && !isSearch) {
+            e.preventDefault();
+          }
+        }
+      } catch (err) {}
+    });
+  });
+
   // Plan Modal
   let isSubmittingPlan = false;
-  document.getElementById('planModalCloseBtn').addEventListener('click', () => modalManager.attemptClose('planModal'));
-  document.getElementById('planModalCancelBtn').addEventListener('click', () => modalManager.attemptClose('planModal'));
-  document.getElementById('planForm').addEventListener('submit', async (e) => {
+  document.getElementById('planModalCloseBtn')?.addEventListener('click', () => modalManager.attemptClose('planModal'));
+  document.getElementById('planModalCancelBtn')?.addEventListener('click', () => modalManager.attemptClose('planModal'));
+  document.getElementById('planForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (isSubmittingPlan) return;
     isSubmittingPlan = true;
@@ -673,27 +1112,6 @@ function bindModalForms() {
       return;
     }
 
-    const estimatedMinutes = parseInt(document.getElementById('planHoursInput').value, 10) || 0;
-    if (estimatedMinutes <= 0) {
-      showToast(i18n.t('minDurationRequired'), 'error');
-      document.getElementById('planHoursInput').focus();
-      unlock();
-      return;
-    }
-
-    if (isEdit) {
-      const childTodos = appState.getState().todos.filter(t => String(t.plan_id) === String(id));
-      const totalTodoMinutes = childTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
-      if (totalTodoMinutes > 0 && estimatedMinutes < totalTodoMinutes) {
-        const msg = i18n.t('planHoursLessThanTodos')
-          .replace('{hours}', estimatedMinutes)
-          .replace('{todoMinutes}', totalTodoMinutes);
-        showToast(msg, 'error', 6000);
-        unlock();
-        return;
-      }
-    }
-
     const titleVal = document.getElementById('planTitleInput').value.trim();
     if (!titleVal) {
       showToast(i18n.t('enterPlanTitle'), 'error');
@@ -708,13 +1126,34 @@ function bindModalForms() {
       return;
     }
 
+    const estimatedMinutes = parseInt(document.getElementById('planHoursInput').value, 10) || 0;
+    if (estimatedMinutes <= 0) {
+      showToast(i18n.t('minDurationRequired'), 'error');
+      document.getElementById('planHoursInput').focus();
+      unlock();
+      return;
+    }
+
     const criteriaVal = document.getElementById('planCriteriaInput').value.trim();
-    if (criteriaVal.length > 1000) {
-      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
+    if (criteriaVal.length > 500) {
+      showToast(i18n.t('textTooLong').replace('{max}', 500), 'error');
       document.getElementById('planCriteriaInput').focus();
       unlock();
       return;
     }
+
+    const existingPlan = isEdit ? appState.getState().plans.find(p => p.id === id) : null;
+    const planTodos = isEdit ? appState.getState().todos.filter(t => String(t.plan_id) === String(id)) : [];
+    const allDosCompleted = planTodos.length > 0 && planTodos.every(t => t.is_completed || t.status === 'completed');
+
+    // Automatically derive status based on task completion (not manually chosen)
+    let autoStatus = 'active';
+    if (isEdit && existingPlan) {
+      autoStatus = allDosCompleted ? 'completed' : (existingPlan.status === 'completed' ? 'active' : (existingPlan.status || 'active'));
+    }
+
+    const sourceInput = document.getElementById('planSourcePlanIdInput');
+    const sourcePlanId = sourceInput ? sourceInput.value : '';
 
     const payload = {
       title: titleVal,
@@ -723,10 +1162,20 @@ function bindModalForms() {
       priority: document.getElementById('planPriorityInput').value,
       estimated_hours: estimatedMinutes,
       success_criteria: criteriaVal,
-      status: 'active'
+      status: autoStatus
     };
+    if (!isEdit && sourcePlanId) {
+      payload.source_plan_id = sourcePlanId;
+    }
 
     if (isEdit) {
+      // Offline check before saving plan edits
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        showToast(i18n.getLang() === 'ko' ? '네트워크 오류: 인터넷 연결을 확인해 주세요.' : 'Network error: Please check your internet connection.', 'error');
+        unlock();
+        return;
+      }
+
       const revisionReason = document.getElementById('planRevisionReasonInput').value.trim();
       if (revisionReason.length > 255) {
         showToast(i18n.t('textTooLong').replace('{max}', 255), 'error');
@@ -734,7 +1183,6 @@ function bindModalForms() {
         unlock();
         return;
       }
-      const existingPlan = appState.getState().plans.find(p => p.id === id);
 
       // Verify that actual plan data changed
       const isContentChanged = existingPlan && (
@@ -767,9 +1215,15 @@ function bindModalForms() {
 
         const repGroup = document.getElementById('planReplicateTodosGroup');
         const repCheck = document.getElementById('planReplicateTodosCheckbox');
-        const sourceInput = document.getElementById('planSourcePlanIdInput');
         const isReplicateActive = repGroup && repGroup.style.display !== 'none' && repCheck && repCheck.checked;
-        const sourcePlanId = sourceInput ? sourceInput.value : '';
+
+        if (sourcePlanId) {
+          // Explicitly update source plan status to completed upon generating feedback plan
+          await API.updatePlan(sourcePlanId, {
+            status: 'completed',
+            revision_reason: 'Completed and advanced to feedback improvement plan'
+          }).catch(() => {});
+        }
 
         if (isReplicateActive && sourcePlanId) {
           const sourceTodos = appState.getState().todos.filter(t => String(t.plan_id) === String(sourcePlanId));
@@ -803,7 +1257,6 @@ function bindModalForms() {
         }
 
         modalManager.forceClose('planModal');
-        // Clear search query so new plan is immediately visible
         appState.setFilters({ search: '' });
         await appState.refreshData();
         appState.setSelectedPlan(createdPlan.id);
@@ -815,32 +1268,42 @@ function bindModalForms() {
         }
       }
     } catch (err) {
-      showToast(err.message, 'error');
+      const isNetworkErr = (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        err?.name === 'TypeError' ||
+        (err?.message && (err.message.includes('fetch') || err.message.includes('network') || err.message.includes('offline') || err.message.includes('Failed to fetch')));
+      if (isNetworkErr) {
+        showToast(i18n.getLang() === 'ko' ? '네트워크 오류: 인터넷 연결을 확인해 주세요.' : 'Network error: Please check your internet connection.', 'error');
+      } else {
+        showToast(err.message, 'error');
+      }
     } finally {
       unlock();
     }
   });
 
   // To Do Modal
-  document.getElementById('todoModalCloseBtn').addEventListener('click', () => modalManager.attemptClose('todoModal'));
-  document.getElementById('todoModalCancelBtn').addEventListener('click', () => modalManager.attemptClose('todoModal'));
+  document.getElementById('todoModalCloseBtn')?.addEventListener('click', () => modalManager.attemptClose('todoModal'));
+  document.getElementById('todoModalCancelBtn')?.addEventListener('click', () => modalManager.attemptClose('todoModal'));
 
-  document.getElementById('todoPlanSelect').addEventListener('change', (e) => {
+  document.getElementById('todoPlanSelect')?.addEventListener('change', (e) => {
     const selectedPlan = appState.getState().plans.find(p => p.id === e.target.value);
     if (selectedPlan && selectedPlan.period_end) {
-      document.getElementById('todoDueDateInput').max = selectedPlan.period_end;
-      if (document.getElementById('todoDueDateInput').value > selectedPlan.period_end) {
-        document.getElementById('todoDueDateInput').value = selectedPlan.period_end;
-        const msg = i18n.t('todoDueDateExceedsPlan').replace('{date}', selectedPlan.period_end);
-        showToast(msg, 'warning', 4500);
+      const dueDateEl = document.getElementById('todoDueDateInput');
+      if (dueDateEl) {
+        dueDateEl.max = selectedPlan.period_end;
+        if (dueDateEl.value > selectedPlan.period_end) {
+          dueDateEl.value = selectedPlan.period_end;
+          const msg = i18n.t('todoDueDateExceedsPlan').replace('{date}', selectedPlan.period_end);
+          showToast(msg, 'warning', 4500);
+        }
       }
     }
   });
 
-  document.getElementById('todoEstimatedMinutesInput').addEventListener('input', (e) => {
-    const planId = document.getElementById('todoPlanSelect').value;
+  document.getElementById('todoEstimatedMinutesInput')?.addEventListener('input', (e) => {
+    const planId = document.getElementById('todoPlanSelect')?.value;
     const selectedPlan = appState.getState().plans.find(p => String(p.id) === String(planId));
-    const id = document.getElementById('todoFormId').value;
+    const id = document.getElementById('todoFormId')?.value;
     const isEdit = Boolean(id);
     const estimatedMinutes = parseInt(e.target.value, 10) || 0;
 
@@ -860,7 +1323,7 @@ function bindModalForms() {
   });
 
   let isSubmittingTodo = false;
-  document.getElementById('todoForm').addEventListener('submit', async (e) => {
+  document.getElementById('todoForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (isSubmittingTodo) return;
     isSubmittingTodo = true;
@@ -888,7 +1351,6 @@ function bindModalForms() {
     const dueDate = document.getElementById('todoDueDateInput').value;
     const selectedPlan = appState.getState().plans.find(p => String(p.id) === String(planId));
 
-    // Guard 1: Prevent To Do due date from exceeding linked plan's end date
     if (selectedPlan && selectedPlan.period_end && dueDate > selectedPlan.period_end) {
       const msg = i18n.t('todoDueDateExceedsPlan').replace('{date}', selectedPlan.period_end);
       showToast(msg, 'error', 5000);
@@ -904,7 +1366,6 @@ function bindModalForms() {
       return;
     }
 
-    // Guard 2: Prevent child To Dos sum from exceeding Plan total estimated budget
     if (selectedPlan) {
       const planBudgetMinutes = parseInt(selectedPlan.estimated_hours, 10) || 0;
       if (planBudgetMinutes > 0 && estimatedMinutes > 0) {
@@ -980,62 +1441,53 @@ function bindModalForms() {
     }
   });
 
-  // Do Execution Logger & Timer Controls
-  document.getElementById('execModalCloseBtn').addEventListener('click', () => {
-    stopTimer();
-    modalManager.attemptClose('execModal');
-  });
-  document.getElementById('execModalCancelBtn').addEventListener('click', () => {
-    stopTimer();
-    modalManager.attemptClose('execModal');
-  });
+  // Do Execution Logger
+  document.getElementById('execModalCloseBtn')?.addEventListener('click', () => { stopTimer(); modalManager.attemptClose('execModal'); });
+  document.getElementById('execModalCancelBtn')?.addEventListener('click', () => { stopTimer(); modalManager.attemptClose('execModal'); });
 
   const recalcExecDuration = () => {
-    const startVal = document.getElementById('execStartInput').value;
-    const endVal = document.getElementById('execEndInput').value;
+    const startVal = document.getElementById('execStartInput')?.value;
+    const endVal = document.getElementById('execEndInput')?.value;
     if (startVal && endVal) {
       const diffMs = new Date(endVal).getTime() - new Date(startVal).getTime();
       if (diffMs >= 0) {
-        const mins = Math.round(diffMs / 60000);
-        document.getElementById('execMinutesInput').value = mins;
+        const minInput = document.getElementById('execMinutesInput');
+        if (minInput) minInput.value = Math.round(diffMs / 60000);
       }
     }
   };
+  document.getElementById('execStartInput')?.addEventListener('change', recalcExecDuration);
+  document.getElementById('execEndInput')?.addEventListener('change', recalcExecDuration);
+  document.getElementById('execMinutesInput')?.addEventListener('blur', () => {
+    const startTimeVal = document.getElementById('execStartInput')?.value;
+    const durationMins = parseInt(document.getElementById('execMinutesInput')?.value, 10);
+    if (startTimeVal && !isNaN(durationMins) && durationMins >= 0) {
+      const startDate = new Date(startTimeVal);
+      const endDate = new Date(startDate.getTime() + durationMins * 60000);
+      const tzOffset = endDate.getTimezoneOffset() * 60000;
+      const localISOTime = new Date(endDate.getTime() - tzOffset).toISOString().slice(0, 16);
+      const endInput = document.getElementById('execEndInput');
+      if (endInput) endInput.value = localISOTime;
+    }
+  });
 
-  document.getElementById('execStartInput').addEventListener('change', recalcExecDuration);
-  document.getElementById('execEndInput').addEventListener('change', recalcExecDuration);
+  document.getElementById('execTimerStartBtn')?.addEventListener('click', startTimer);
+  document.getElementById('execTimerStopBtn')?.addEventListener('click', stopTimer);
+  document.getElementById('execTimerResetBtn')?.addEventListener('click', resetTimer);
 
-  document.getElementById('execTimerStartBtn').addEventListener('click', startTimer);
-  document.getElementById('execTimerStopBtn').addEventListener('click', stopTimer);
-  document.getElementById('execTimerResetBtn').addEventListener('click', resetTimer);
-
-  // Complete & Log (Idempotent submission with token locking)
   let isSubmittingExec = false;
-  document.getElementById('execForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
+  const handleSaveLogOnly = async () => {
     if (isSubmittingExec) return;
     isSubmittingExec = true;
 
-    const submitBtn = document.getElementById('execCompleteAndLogBtn');
-    if (submitBtn) {
-      submitBtn.disabled = true;
-      submitBtn.style.pointerEvents = 'none';
-    }
-
-    const unlock = () => {
-      setTimeout(() => {
-        isSubmittingExec = false;
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.style.pointerEvents = '';
-        }
-      }, 600);
-    };
+    const saveOnlyBtn = document.getElementById('execSaveLogOnlyBtn');
+    if (saveOnlyBtn) { saveOnlyBtn.disabled = true; saveOnlyBtn.style.pointerEvents = 'none'; }
+    const unlock = () => { setTimeout(() => { isSubmittingExec = false; if (saveOnlyBtn) { saveOnlyBtn.disabled = false; saveOnlyBtn.style.pointerEvents = ''; } }, 600); };
 
     const todoId = document.getElementById('execTodoId').value;
+    const logId = document.getElementById('execLogId')?.value;
     const startVal = document.getElementById('execStartInput').value;
     const endVal = document.getElementById('execEndInput').value;
-
     if (startVal && endVal && new Date(endVal).getTime() < new Date(startVal).getTime()) {
       showToast(i18n.t('timeRangeError'), 'error');
       unlock();
@@ -1043,120 +1495,76 @@ function bindModalForms() {
     }
     
     const actualMin = parseInt(document.getElementById('execMinutesInput').value, 10) || 0;
-    if (actualMin <= 0) {
-      showToast(i18n.t('minDurationRequired'), 'error');
-      document.getElementById('execMinutesInput').focus();
-      unlock();
-      return;
-    }
-
-    const completionToken = crypto.randomUUID();
     const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
     const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
     const blockedReason = document.getElementById('execBlockerInput').value.trim();
-    if (blockedReason.length > 1000) {
-      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
-      document.getElementById('execBlockerInput').focus();
-      unlock();
-      return;
-    }
+    const memoVal = document.getElementById('execMemoInput')?.value?.trim() || '';
 
     try {
-      const result = await API.completeTodoIdempotent(todoId, {
-        execution_start: startTime,
-        execution_end: endTime,
-        actual_minutes: actualMin,
-        blocked_reason: blockedReason
-      }, completionToken);
-
+      if (logId) {
+        await API.updateDoLog(logId, { execution_start: startTime, execution_end: endTime, actual_minutes: actualMin, blocked_reason: blockedReason, memo: memoVal });
+        showToast(i18n.getLang() === 'ko' ? '기록이 수정되었습니다.' : 'Log updated successfully.', 'success');
+      } else {
+        await API.addDoLog(todoId, { execution_start: startTime, execution_end: endTime, actual_minutes: actualMin, blocked_reason: blockedReason, memo: memoVal });
+        showToast(i18n.t('logSaved'), 'success');
+      }
       stopTimer();
       modalManager.forceClose('execModal');
       await appState.refreshData();
-      showToast(result.isDuplicate ? (i18n.getLang() === 'ko' ? '이미 처리된 요청입니다.' : 'Action already recorded.') : i18n.t('todoCompleted'), 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      unlock();
-    }
-  });
+    } catch (err) { showToast(err.message, 'error'); } finally { unlock(); }
+  };
+  document.getElementById('execSaveLogOnlyBtn')?.addEventListener('click', (e) => { e.preventDefault(); handleSaveLogOnly(); });
 
-  // Save Log Only (without completing To Do)
-  let isSubmittingLogOnly = false;
-  document.getElementById('execSaveLogOnlyBtn').addEventListener('click', async () => {
-    if (isSubmittingLogOnly) return;
-    isSubmittingLogOnly = true;
-
-    const saveBtn = document.getElementById('execSaveLogOnlyBtn');
-    if (saveBtn) {
-      saveBtn.disabled = true;
-      saveBtn.style.pointerEvents = 'none';
-    }
-
-    const unlock = () => {
-      setTimeout(() => {
-        isSubmittingLogOnly = false;
-        if (saveBtn) {
-          saveBtn.disabled = false;
-          saveBtn.style.pointerEvents = '';
-        }
-      }, 600);
-    };
+  document.getElementById('execForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (isSubmittingExec) return;
+    isSubmittingExec = true;
+    const submitBtn = document.getElementById('execCompleteAndLogBtn');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.style.pointerEvents = 'none'; }
+    const unlock = () => { setTimeout(() => { isSubmittingExec = false; if (submitBtn) { submitBtn.disabled = false; submitBtn.style.pointerEvents = ''; } }, 600); };
 
     const todoId = document.getElementById('execTodoId').value;
+    const logId = document.getElementById('execLogId')?.value;
     const startVal = document.getElementById('execStartInput').value;
     const endVal = document.getElementById('execEndInput').value;
-
     if (startVal && endVal && new Date(endVal).getTime() < new Date(startVal).getTime()) {
       showToast(i18n.t('timeRangeError'), 'error');
       unlock();
       return;
     }
-
+    
     const actualMin = parseInt(document.getElementById('execMinutesInput').value, 10) || 0;
-    if (actualMin <= 0) {
-      showToast(i18n.t('minDurationRequired'), 'error');
-      document.getElementById('execMinutesInput').focus();
-      unlock();
-      return;
-    }
+    if (actualMin <= 0) { showToast(i18n.t('minDurationRequired'), 'error'); unlock(); return; }
 
+    const completionToken = crypto.randomUUID();
     const startTime = startVal ? new Date(startVal).toISOString() : new Date().toISOString();
     const endTime = endVal ? new Date(endVal).toISOString() : new Date().toISOString();
     const blockedReason = document.getElementById('execBlockerInput').value.trim();
-    if (blockedReason.length > 1000) {
-      showToast(i18n.t('textTooLong').replace('{max}', 1000), 'error');
-      document.getElementById('execBlockerInput').focus();
-      unlock();
-      return;
-    }
+    const memoVal = document.getElementById('execMemoInput')?.value?.trim() || '';
 
     try {
-      await API.addDoLog(todoId, {
-        execution_start: startTime,
-        execution_end: endTime,
-        actual_minutes: actualMin,
-        blocked_reason: blockedReason
-      });
+      if (logId) {
+        await API.updateDoLog(logId, { execution_start: startTime, execution_end: endTime, actual_minutes: actualMin, blocked_reason: blockedReason, memo: memoVal });
+        showToast(i18n.getLang() === 'ko' ? '기록이 수정되었습니다.' : 'Log updated successfully.', 'success');
+      } else {
+        await API.completeTodoIdempotent(todoId, { execution_start: startTime, execution_end: endTime, actual_minutes: actualMin, blocked_reason: blockedReason, memo: memoVal }, completionToken);
+        showToast(i18n.t('taskCompletedAndLogSaved'), 'success');
+      }
       stopTimer();
       modalManager.forceClose('execModal');
       await appState.refreshData();
-      showToast(i18n.getLang() === 'ko' ? '실행 기록이 저장되었습니다.' : 'Execution log saved.', 'success');
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      unlock();
-    }
+    } catch (err) { showToast(err.message, 'error'); } finally { unlock(); }
   });
 
-  // Revision History Modal Close
-  document.getElementById('historyModalCloseBtn').addEventListener('click', () => modalManager.forceClose('historyModal'));
-  document.getElementById('historyModalDismissBtn').addEventListener('click', () => modalManager.forceClose('historyModal'));
+  // History Modal
+  document.getElementById('historyModalCloseBtn')?.addEventListener('click', () => modalManager.forceClose('historyModal'));
+  document.getElementById('historyModalDismissBtn')?.addEventListener('click', () => modalManager.forceClose('historyModal'));
 
   // See Review Modal
   let isSubmittingSee = false;
-  document.getElementById('seeModalCloseBtn').addEventListener('click', () => modalManager.attemptClose('seeModal'));
-  document.getElementById('seeModalCancelBtn').addEventListener('click', () => modalManager.attemptClose('seeModal'));
-  document.getElementById('seeForm').addEventListener('submit', async (e) => {
+  document.getElementById('seeModalCloseBtn')?.addEventListener('click', () => modalManager.attemptClose('seeModal'));
+  document.getElementById('seeModalCancelBtn')?.addEventListener('click', () => modalManager.attemptClose('seeModal'));
+  document.getElementById('seeForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (isSubmittingSee) return;
     isSubmittingSee = true;
@@ -1224,9 +1632,9 @@ function bindModalForms() {
 
   // Reset Confirmation Modal
   let isSubmittingReset = false;
-  document.getElementById('resetModalCloseBtn').addEventListener('click', () => modalManager.forceClose('resetModal'));
-  document.getElementById('resetModalCancelBtn').addEventListener('click', () => modalManager.forceClose('resetModal'));
-  document.getElementById('resetModalConfirmBtn').addEventListener('click', async () => {
+  document.getElementById('resetModalCloseBtn')?.addEventListener('click', () => modalManager.forceClose('resetModal'));
+  document.getElementById('resetModalCancelBtn')?.addEventListener('click', () => modalManager.forceClose('resetModal'));
+  document.getElementById('resetModalConfirmBtn')?.addEventListener('click', async () => {
     if (isSubmittingReset) return;
     isSubmittingReset = true;
 
@@ -1283,9 +1691,9 @@ function bindModalForms() {
 
   // Import JSON Modal
   let isSubmittingImport = false;
-  document.getElementById('importModalCloseBtn').addEventListener('click', () => modalManager.forceClose('importModal'));
-  document.getElementById('importModalCancelBtn').addEventListener('click', () => modalManager.forceClose('importModal'));
-  document.getElementById('importModalSubmitBtn').addEventListener('click', async () => {
+  document.getElementById('importModalCloseBtn')?.addEventListener('click', () => modalManager.forceClose('importModal'));
+  document.getElementById('importModalCancelBtn')?.addEventListener('click', () => modalManager.forceClose('importModal'));
+  document.getElementById('importModalSubmitBtn')?.addEventListener('click', async () => {
     if (isSubmittingImport) return;
     isSubmittingImport = true;
 
@@ -1354,6 +1762,8 @@ function openCreatePlanModal() {
   setPriorityPill('planPriorityPills', 'planPriorityInput', 'medium');
   document.getElementById('planHoursInput').value = '60';
   document.getElementById('planCriteriaInput').value = '';
+  const statusInput = document.getElementById('planStatusInput');
+  if (statusInput) statusInput.value = 'active';
   document.getElementById('planRevisionReasonGroup').style.display = 'none';
   document.getElementById('planRevisionReasonInput').value = '';
   const repGroup = document.getElementById('planReplicateTodosGroup');
@@ -1363,9 +1773,14 @@ function openCreatePlanModal() {
   modalManager.open('planModal');
 }
 
-function openEditPlanModal(planId) {
+function openEditPlanModal(planId, triggerEl = null) {
+  if (planId) {
+    appState.setSelectedPlan(planId);
+  }
   const plan = appState.getState().plans.find(p => p.id === planId);
   if (!plan) return;
+
+  const opener = triggerEl || (typeof document !== 'undefined' ? document.querySelector(`.plan-card[data-plan-id="${planId}"] .edit-plan-btn`) : null) || (typeof document !== 'undefined' ? document.activeElement : null);
 
   document.getElementById('planModalTitle').textContent = i18n.t('editPlanTitle');
   document.getElementById('planFormId').value = plan.id;
@@ -1375,16 +1790,21 @@ function openEditPlanModal(planId) {
   setPriorityPill('planPriorityPills', 'planPriorityInput', plan.priority || 'medium');
   document.getElementById('planHoursInput').value = plan.estimated_hours;
   document.getElementById('planCriteriaInput').value = plan.success_criteria || '';
+  const statusInput = document.getElementById('planStatusInput');
+  if (statusInput) statusInput.value = plan.status || 'active';
   document.getElementById('planRevisionReasonGroup').style.display = 'block';
   document.getElementById('planRevisionReasonInput').value = '';
   const repGroup = document.getElementById('planReplicateTodosGroup');
   if (repGroup) repGroup.style.display = 'none';
   const sourceInput = document.getElementById('planSourcePlanIdInput');
   if (sourceInput) sourceInput.value = '';
-  modalManager.open('planModal');
+  modalManager.open('planModal', opener);
 }
 
 function openPlanHistoryModal(planId) {
+  if (planId) {
+    appState.setSelectedPlan(planId);
+  }
   const state = appState.getState();
   const plan = state.plans.find(p => p.id === planId);
   const histories = state.plan_histories.filter(h => h.plan_id === planId);
@@ -1429,15 +1849,15 @@ function openCreateTodoModal() {
 
 function openEditTodoModal(todoId) {
   const state = appState.getState();
-  const todo = state.todos.find(t => t.id === todoId);
+  const todo = (state.todos || []).find(t => t.id === todoId);
   if (!todo) return;
 
   const select = document.getElementById('todoPlanSelect');
-  select.innerHTML = state.plans.map(p => `
+  select.innerHTML = (state.plans || []).map(p => `
     <option value="${p.id}" ${p.id === todo.plan_id ? 'selected' : ''}>${escapeHtml(p.title)}</option>
   `).join('');
 
-  const targetPlan = state.plans.find(p => p.id === todo.plan_id);
+  const targetPlan = (state.plans || []).find(p => p.id === todo.plan_id);
   const dueDateInput = document.getElementById('todoDueDateInput');
   if (targetPlan && targetPlan.period_end) {
     dueDateInput.max = targetPlan.period_end;
@@ -1456,14 +1876,16 @@ function openEditTodoModal(todoId) {
   modalManager.open('todoModal');
 }
 
-function openExecLoggerModal(todoId) {
-  const todo = appState.getState().todos.find(t => t.id === todoId);
+function openExecLoggerModal(todoId, logId = null) {
+  const todo = (appState.getState().todos || []).find(t => t.id === todoId);
   if (!todo) return;
 
-  const logs = appState.getState().do_logs.filter(l => String(l.todo_id) === String(todo.id));
+  const logs = (appState.getState().do_logs || []).filter(l => String(l.todo_id) === String(todo.id));
   const existingActualMinutes = logs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
 
   document.getElementById('execTodoId').value = todo.id;
+  const execLogIdEl = document.getElementById('execLogId');
+  if (execLogIdEl) execLogIdEl.value = logId || '';
   
   const summaryText = existingActualMinutes > 0
     ? `${todo.title} (${i18n.t('estimatedLabel')} ${todo.estimated_minutes || 0}${i18n.t('minutesUnit')} | ${i18n.t('actualLabel')} ${existingActualMinutes}${i18n.t('minutesUnit')})`
@@ -1476,27 +1898,55 @@ function openExecLoggerModal(todoId) {
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
-  // 기존에 기록된 실제 소요 시간이 있으면 그 값을 기본값으로, 없으면 예상 소요 시간을 기본값으로 설정
-  const initialMinutes = existingActualMinutes > 0 ? existingActualMinutes : (Number(todo.estimated_minutes) || 30);
-  timerState.baseMinutes = initialMinutes;
+  timerState.baseMinutes = 0;
 
-  const startTime = new Date(now.getTime() - (initialMinutes * 60000));
+  const targetLog = logId ? (appState.getState().do_logs || []).find(l => String(l.id) === String(logId)) : null;
+  const saveOnlyBtn = document.getElementById('execSaveLogOnlyBtn');
+  const submitBtn = document.getElementById('execCompleteAndLogBtn');
+  const timerSection = document.getElementById('execTimerSection');
 
-  document.getElementById('execStartInput').value = toLocalInput(startTime);
-  document.getElementById('execEndInput').value = toLocalInput(now);
-  document.getElementById('execMinutesInput').value = initialMinutes;
-  
-  const lastBlocker = logs.length > 0 ? (logs[logs.length - 1].blocked_reason || '') : '';
-  document.getElementById('execBlockerInput').value = lastBlocker;
+  if (targetLog) {
+    document.getElementById('execModalTitle').textContent = i18n.getLang() === 'ko' ? '실행 기록 수정' : 'Edit Execution Log';
+    if (saveOnlyBtn) saveOnlyBtn.style.display = 'none';
+    if (submitBtn) submitBtn.textContent = i18n.getLang() === 'ko' ? '저장' : 'Save';
+    if (timerSection) timerSection.style.display = 'none';
+
+    const sDate = targetLog.execution_start ? new Date(targetLog.execution_start) : now;
+    const eDate = targetLog.execution_end ? new Date(targetLog.execution_end) : now;
+    document.getElementById('execStartInput').value = toLocalInput(sDate);
+    document.getElementById('execEndInput').value = toLocalInput(eDate);
+    document.getElementById('execMinutesInput').value = targetLog.actual_minutes || 0;
+    document.getElementById('execBlockerInput').value = targetLog.blocked_reason || '';
+    const memoInput = document.getElementById('execMemoInput');
+    if (memoInput) memoInput.value = targetLog.memo || '';
+  } else {
+    document.getElementById('execModalTitle').textContent = i18n.getLang() === 'ko' ? 'Do 실행 기록' : 'Log Execution Time';
+    if (saveOnlyBtn) saveOnlyBtn.style.display = '';
+    if (submitBtn) submitBtn.textContent = i18n.getLang() === 'ko' ? '완료 처리 및 기록 저장' : 'Complete & Save Log';
+    if (timerSection) timerSection.style.display = '';
+
+    document.getElementById('execStartInput').value = toLocalInput(now);
+    document.getElementById('execEndInput').value = toLocalInput(now);
+    document.getElementById('execMinutesInput').value = 0;
+    document.getElementById('execBlockerInput').value = '';
+    const memoInput = document.getElementById('execMemoInput');
+    if (memoInput) memoInput.value = '';
+  }
 
   resetTimer();
   modalManager.open('execModal');
 }
 
 function openSeeReviewModal() {
-  const planId = appState.getState().selectedPlanId;
+  const state = appState.getState();
+  const planId = state.selectedPlanId;
   if (!planId) {
     showToast(i18n.t('selectPlanFirst'), 'warning');
+    return;
+  }
+  const planTodos = (state.todos || []).filter(t => String(t.plan_id) === String(planId));
+  if (planTodos.length === 0) {
+    showToast(i18n.getLang() === 'ko' ? '해당 계획에 등록된 할 일(Do)이 없어 회고를 작성할 수 없습니다.' : 'Cannot write retrospective: No Do entries exist for this plan.', 'warning');
     return;
   }
   document.getElementById('seeReviewDateInput').value = getKSTToday();
@@ -1553,8 +2003,10 @@ function startTimer() {
   
   timerState.startEpoch = Date.now() - (timerState.elapsedSeconds * 1000);
   
-  document.getElementById('execTimerStartBtn').disabled = true;
-  document.getElementById('execTimerStopBtn').disabled = false;
+  const startBtn = document.getElementById('execTimerStartBtn');
+  const stopBtn = document.getElementById('execTimerStopBtn');
+  if (startBtn) startBtn.disabled = true;
+  if (stopBtn) stopBtn.disabled = false;
 
   timerState.intervalId = setInterval(() => {
     const deltaMs = Date.now() - timerState.startEpoch;
@@ -1567,15 +2019,18 @@ function stopTimer() {
   if (!timerState.isRunning) return;
   timerState.isRunning = false;
   clearInterval(timerState.intervalId);
-  document.getElementById('execTimerStartBtn').disabled = false;
-  document.getElementById('execTimerStopBtn').disabled = true;
+  const startBtn = document.getElementById('execTimerStartBtn');
+  const stopBtn = document.getElementById('execTimerStopBtn');
+  if (startBtn) startBtn.disabled = false;
+  if (stopBtn) stopBtn.disabled = true;
 
   const measuredMins = Math.max(1, Math.round(timerState.elapsedSeconds / 60));
   const baseMins = Number(timerState.baseMinutes) || 0;
   
   // 기존 소요 시간에 타이머 측정 시간을 누적
   const totalMins = baseMins + measuredMins;
-  document.getElementById('execMinutesInput').value = totalMins;
+  const minEl = document.getElementById('execMinutesInput');
+  if (minEl) minEl.value = totalMins;
 
   // 종료 시간 및 시작 시간도 누적 시간에 맞춰 자동 갱신
   const now = new Date();
@@ -1584,22 +2039,27 @@ function stopTimer() {
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
-  document.getElementById('execStartInput').value = toLocalInput(startTime);
-  document.getElementById('execEndInput').value = toLocalInput(now);
+  const startInput = document.getElementById('execStartInput');
+  const endInput = document.getElementById('execEndInput');
+  if (startInput) startInput.value = toLocalInput(startTime);
+  if (endInput) endInput.value = toLocalInput(now);
 }
 
 function resetTimer() {
   if (timerState.isRunning) {
     timerState.isRunning = false;
     clearInterval(timerState.intervalId);
-    document.getElementById('execTimerStartBtn').disabled = false;
-    document.getElementById('execTimerStopBtn').disabled = true;
+    const startBtn = document.getElementById('execTimerStartBtn');
+    const stopBtn = document.getElementById('execTimerStopBtn');
+    if (startBtn) startBtn.disabled = false;
+    if (stopBtn) stopBtn.disabled = true;
   }
   timerState.elapsedSeconds = 0;
   updateTimerDisplay();
   const baseMins = Number(timerState.baseMinutes) || 0;
   if (baseMins > 0) {
-    document.getElementById('execMinutesInput').value = baseMins;
+    const minEl = document.getElementById('execMinutesInput');
+    if (minEl) minEl.value = baseMins;
   }
 }
 
@@ -1617,36 +2077,38 @@ function updateTimerDisplay() {
 // --- KEYBOARD SHORTCUTS ---
 function bindKeyboardShortcuts() {
   window.addEventListener('keydown', (e) => {
-    // Ctrl / Cmd + Enter to submit active modal
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      if (modalManager.activeModal) {
-        const submitBtn = modalManager.activeModal.querySelector('button[type="submit"]');
-        if (submitBtn) {
-          e.preventDefault();
-          submitBtn.click();
+    try {
+      // Ctrl / Cmd + Enter to submit active modal
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (modalManager.activeModal) {
+          const submitBtn = modalManager.activeModal.querySelector('button[type="submit"], #deleteAccountConfirmBtn');
+          if (submitBtn && !submitBtn.disabled) {
+            e.preventDefault();
+            submitBtn.click();
+          }
         }
+        return;
       }
-      return;
-    }
 
-    const tag = document.activeElement?.tagName?.toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
 
-    // 'N' for New Plan
-    if (e.key === 'n' || e.key === 'N') {
-      e.preventDefault();
-      openCreatePlanModal();
-      return;
-    }
+      // 'N' for New Plan
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        openCreatePlanModal();
+        return;
+      }
 
-    // '1' / '2' / '3' for Mobile column switching
-    if (e.key === '1') {
-      appState.setMobileTab('plan');
-    } else if (e.key === '2') {
-      appState.setMobileTab('do');
-    } else if (e.key === '3') {
-      appState.setMobileTab('see');
-    }
+      // '1' / '2' / '3' for Mobile column switching
+      if (e.key === '1') {
+        appState.setMobileTab('plan');
+      } else if (e.key === '2') {
+        appState.setMobileTab('do');
+      } else if (e.key === '3') {
+        appState.setMobileTab('see');
+      }
+    } catch (err) {}
   });
 }
 

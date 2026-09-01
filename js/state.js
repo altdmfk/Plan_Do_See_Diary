@@ -4,13 +4,16 @@
  */
 
 import { CONFIG } from './config.js';
+import { authClient } from './auth.js';
 import { API } from './api.js';
 import { getKSTToday, isDelayedKST } from './dateUtils.js';
 
 class StateStore {
   constructor() {
     this.listeners = new Set();
-    const savedTheme = typeof localStorage !== 'undefined' ? localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME) : null;
+    const uid = typeof authClient !== 'undefined' && typeof authClient.getUserId === 'function' ? authClient.getUserId() : null;
+    const userSavedTheme = uid && typeof localStorage !== 'undefined' ? localStorage.getItem(`pds_theme_${uid}`) : null;
+    const savedTheme = typeof localStorage !== 'undefined' ? (userSavedTheme || localStorage.getItem('pds_theme_pref') || localStorage.getItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME) || CONFIG.DEFAULT_THEME) : CONFIG.DEFAULT_THEME;
     this.state = {
       theme: savedTheme || CONFIG.DEFAULT_THEME,
       plans: [],
@@ -18,18 +21,22 @@ class StateStore {
       todos: [],
       do_logs: [],
       see_reviews: [],
+      reviews: [],
       selectedPlanId: null,
       filters: {
-        planId: '', // '' = all plans, or specific planId
-        planPriority: 'all', // Dedicated Plan priority filter (all, urgent, high, medium, low)
-        planSort: 'created_desc', // Plan sort: created_desc, end_asc, start_asc, priority_desc
+        planId: '',
+        planPriority: 'all',
+        planStatus: 'all',
+        planSort: 'created_desc',
+        planPage: 1,
+        planPageSize: CONFIG.PLAN_PAGE_SIZE || 10,
         search: '',
-        priority: 'all', // Dedicated Do priority filter (all, urgent, high, medium, low)
-        tags: [], // Multi-tag array support
+        priority: 'all',
+        tags: [],
         status: 'all',
-        sort: 'due_asc' // Do sort: due_asc, priority_desc, created_desc
+        sort: 'due_asc'
       },
-      activeMobileTab: 'plan', // 'plan' | 'do' | 'see'
+      activeMobileTab: 'plan',
       loading: false
     };
   }
@@ -55,30 +62,38 @@ class StateStore {
   }
 
   async init() {
+    return await this.refreshData();
+  }
+
+  async refreshData() {
     this.state.loading = true;
     this.notify();
     try {
-      await this.refreshData();
+      // Ensure authenticated session is hydrated before initial or refreshed data fetch
+      if (typeof authClient !== 'undefined' && typeof authClient.getSession === 'function') {
+        await authClient.getSession();
+      }
+      const data = await API.fetchAll();
+      this.state.plans = data.plans || [];
+      this.state.plan_histories = data.plan_histories || [];
+      this.state.todos = data.todos || [];
+      this.state.do_logs = data.do_logs || [];
+      this.state.see_reviews = data.see_reviews || [];
+      this.state.reviews = data.see_reviews || [];
+
+      if (!this.state.selectedPlanId && this.state.plans.length > 0) {
+        this.state.selectedPlanId = this.state.plans[0].id;
+      } else if (this.state.plans.length === 0) {
+        this.state.selectedPlanId = null;
+      }
     } finally {
       this.state.loading = false;
       this.notify();
     }
   }
 
-  async refreshData() {
-    const data = await API.fetchAll();
-    this.state.plans = data.plans || [];
-    this.state.plan_histories = data.plan_histories || [];
-    this.state.todos = data.todos || [];
-    this.state.do_logs = data.do_logs || [];
-    this.state.see_reviews = data.see_reviews || [];
-
-    if (!this.state.selectedPlanId && this.state.plans.length > 0) {
-      this.state.selectedPlanId = this.state.plans[0].id;
-    } else if (this.state.plans.length === 0) {
-      this.state.selectedPlanId = null;
-    }
-    this.notify();
+  reset() {
+    this.clearAll();
   }
 
   clearAll() {
@@ -87,13 +102,24 @@ class StateStore {
     this.state.todos = [];
     this.state.do_logs = [];
     this.state.see_reviews = [];
+    this.state.reviews = [];
     this.state.selectedPlanId = null;
     this.notify();
+  }
+
+  // Alias for explicit cross-session state reset (Defect 3: prevents data flash on account switch)
+  resetGlobalState() {
+    this.clearAll();
   }
 
   setTheme(newTheme) {
     this.state.theme = newTheme;
     if (typeof localStorage !== 'undefined') {
+      const uid = authClient.getUserId();
+      if (uid) {
+        localStorage.setItem(`pds_theme_${uid}`, newTheme);
+      }
+      localStorage.setItem('pds_theme_pref', newTheme);
       localStorage.setItem(CONFIG.STORAGE_KEYS.ACTIVE_THEME, newTheme);
     }
     if (typeof document !== 'undefined' && document.documentElement) {
@@ -103,13 +129,37 @@ class StateStore {
   }
 
   setSelectedPlan(planId) {
-    this.state.selectedPlanId = planId;
+    this.state.selectedPlanId = planId || null;
     this.notify();
   }
 
+  getTodoActualMinutes(todoId) {
+    const logs = (this.state.do_logs || []).filter(l => String(l.todo_id) === String(todoId));
+    return logs.reduce((sum, l) => sum + (Number(l.actual_minutes || l.duration_minutes) || 0), 0);
+  }
+
   setFilters(partialFilters) {
+    const currentFilters = this.state.filters || {};
+    const isPlanFilterChanging = (
+      ('search' in partialFilters && partialFilters.search !== currentFilters.search) ||
+      ('planPriority' in partialFilters && partialFilters.planPriority !== currentFilters.planPriority) ||
+      ('planStatus' in partialFilters && partialFilters.planStatus !== currentFilters.planStatus) ||
+      ('planSort' in partialFilters && partialFilters.planSort !== currentFilters.planSort) ||
+      ('planId' in partialFilters && partialFilters.planId !== currentFilters.planId)
+    );
+
+    // When filters or search queries change, automatically reset current page back to page 1
+    if (isPlanFilterChanging && !('planPage' in partialFilters)) {
+      partialFilters.planPage = 1;
+    }
+
     this.state.filters = { ...this.state.filters, ...partialFilters };
     this.notify();
+  }
+
+  setPlanPage(page) {
+    const p = Math.max(1, parseInt(page, 10) || 1);
+    this.setFilters({ planPage: p });
   }
 
   toggleTagFilter(tag) {
@@ -158,25 +208,46 @@ class StateStore {
   // --- KST ANALYTICS CALCULATOR ---
 
   getKSTMetrics(planId = this.state.selectedPlanId) {
-    const activeTodos = this.state.todos.filter(t => !planId || t.plan_id === planId);
-    const plannedCount = activeTodos.length;
-    const completedCount = activeTodos.filter(t => t.is_completed).length;
+    const plans = this.state.plans || [];
+    const todos = this.state.todos || [];
+    const activeTodos = todos.filter(t => !planId || String(t.plan_id) === String(planId));
+    const relevantPlans = planId ? plans.filter(p => String(p.id) === String(planId)) : plans;
+    
+    // Incomplete Do items (uncompleted tasks)
+    // Condition: item.is_completed === false AND item.status !== 'completed'
+    const incompleteDoItems = activeTodos.filter(t => !t.is_completed && t.status !== 'completed');
 
-    let delayedCount = 0;
+    // Edge case: Plans with no Do record yet are treated as incomplete items
+    const plansWithoutTodos = relevantPlans.filter(p => {
+      if (p.status === 'completed' || p.is_completed === true) return false;
+      const pTodos = todos.filter(t => String(t.plan_id) === String(p.id));
+      return pTodos.length === 0;
+    });
+
+    const plannedCount = incompleteDoItems.length + (planId ? (activeTodos.length === 0 && relevantPlans.length > 0 && relevantPlans[0].status !== 'completed' ? 1 : 0) : plansWithoutTodos.length);
+
+    const completedCount = activeTodos.filter(t => t.is_completed || t.status === 'completed').length;
+    const doLogs = this.state.do_logs || [];
+
+    // T06-C30: If a plan/task is completed, it must strictly be counted as COMPLETED and NEVER as delayed/overdue
+    const delayedTodoIds = new Set();
+    const today = getKSTToday();
     for (const todo of activeTodos) {
-      const isDateDelayed = isDelayedKST(todo.due_date, todo.is_completed);
-      const todoLogs = this.state.do_logs.filter(l => String(l.todo_id) === String(todo.id));
+      if (todo.is_completed || todo.status === 'completed') continue; // Completed tasks are NEVER delayed
+      const isDateDelayed = isDelayedKST(todo.due_date, todo.is_completed, todo.status);
+      const todoLogs = doLogs.filter(l => String(l.todo_id) === String(todo.id));
       const actualMin = todoLogs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
       const isTimeOverrun = actualMin > (parseInt(todo.estimated_minutes, 10) || 0);
       if (isDateDelayed || isTimeOverrun) {
-        delayedCount++;
+        delayedTodoIds.add(todo.id);
       }
     }
+    const delayedCount = delayedTodoIds.size;
 
     const blockedTodoIds = new Set();
-    for (const log of this.state.do_logs) {
+    for (const log of doLogs) {
       if (log.blocked_reason && log.blocked_reason.trim().length > 0) {
-        if (activeTodos.some(t => t.id === log.todo_id)) {
+        if (activeTodos.some(t => String(t.id) === String(log.todo_id))) {
           blockedTodoIds.add(log.todo_id);
         }
       }
@@ -189,8 +260,8 @@ class StateStore {
     }
 
     let totalActualMin = 0;
-    for (const log of this.state.do_logs) {
-      if (activeTodos.some(t => t.id === log.todo_id)) {
+    for (const log of doLogs) {
+      if (activeTodos.some(t => String(t.id) === String(log.todo_id))) {
         totalActualMin += (parseInt(log.actual_minutes, 10) || 0);
       }
     }
@@ -204,15 +275,19 @@ class StateStore {
       blockedCount,
       totalEstimatedMin,
       totalActualMin,
-      timeDeltaMinutes
+      timeDeltaMinutes,
+      totalPlansCount: relevantPlans.length,
+      totalTodosCount: activeTodos.length
     };
   }
 
   // --- GET FILTERED PLANS (Includes plans with matching child To Dos) ---
 
   getFilteredPlans() {
-    let list = this.state.plans;
-    const { search, planPriority, planId, planSort } = this.state.filters;
+    let list = this.state.plans || [];
+    const allPlans = this.state.plans || [];
+    const todos = this.state.todos || [];
+    const { search, planPriority, planStatus, planId, planSort } = this.state.filters || {};
 
     if (planId && planId !== '' && planId !== 'all') {
       list = list.filter(p => String(p.id) === String(planId));
@@ -222,10 +297,35 @@ class StateStore {
       list = list.filter(p => p.priority === planPriority);
     }
 
+    if (planStatus && planStatus !== 'all') {
+      list = list.filter(p => {
+        const isFeedbackConverted = allPlans.some(ap => ap.source_plan_id === p.id || ap.parent_plan_id === p.id);
+        const pTodos = todos.filter(t => String(t.plan_id) === String(p.id));
+        const allDosCompleted = pTodos.length > 0 && pTodos.every(t => t.is_completed || t.status === 'completed');
+        const hasIncompleteDos = pTodos.some(t => !t.is_completed && t.status !== 'completed');
+
+        let isCompleted = false;
+        if (isFeedbackConverted) {
+          isCompleted = true;
+        } else if (hasIncompleteDos) {
+          isCompleted = false;
+        } else if (allDosCompleted || p.status === 'completed' || p.is_completed === true) {
+          isCompleted = true;
+        }
+
+        if (planStatus === 'completed') {
+          return isCompleted;
+        } else if (planStatus === 'in_progress' || planStatus === 'active') {
+          return !isCompleted;
+        }
+        return true;
+      });
+    }
+
     if (search && search.trim() !== '') {
       const q = search.trim().toLowerCase();
       const matchingTodoPlanIds = new Set(
-        this.state.todos
+        (this.state.todos || [])
           .filter(t => 
             (t.title && t.title.toLowerCase().includes(q)) ||
             (t.description && t.description.toLowerCase().includes(q)) ||
@@ -257,15 +357,44 @@ class StateStore {
     return list;
   }
 
+  // --- GET PAGINATED PLANS (Client/Server-side pagination with auto-page recovery) ---
+
+  getPaginatedPlans() {
+    const allFiltered = this.getFilteredPlans();
+    const pageSize = this.state.filters.planPageSize || CONFIG.PLAN_PAGE_SIZE || 10;
+    const totalItems = allFiltered.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    
+    // Auto-adjust page if current page exceeds totalPages (e.g. after item deletion)
+    let currentPage = Math.min(Math.max(1, this.state.filters.planPage || 1), totalPages);
+    if (currentPage !== this.state.filters.planPage) {
+      this.state.filters.planPage = currentPage;
+    }
+
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const pageItems = allFiltered.slice(startIndex, endIndex);
+
+    return {
+      items: pageItems,
+      totalItems,
+      totalPages,
+      currentPage,
+      pageSize,
+      hasNext: currentPage < totalPages,
+      hasPrev: currentPage > 1
+    };
+  }
+
   // --- GET FILTERED TODOS (Multi-tag filtering support) ---
 
   getFilteredTodos() {
-    let list = this.state.todos;
+    let list = [...(this.state.todos || [])];
     if (this.state.selectedPlanId) {
       list = list.filter(t => t.plan_id === this.state.selectedPlanId);
     }
 
-    const { search, priority, tags, status, sort } = this.state.filters;
+    const { search, priority, tags, status, sort } = this.state.filters || {};
 
     if (search && search.trim() !== '') {
       const q = search.trim().toLowerCase();
@@ -280,7 +409,7 @@ class StateStore {
       list = list.filter(t => t.priority === priority);
     }
 
-    // Multi-tag match: matches if todo contains any of the selected tags (or all of them)
+    // Multi-tag match
     if (tags && tags.length > 0) {
       list = list.filter(t => t.tags && tags.every(tg => t.tags.includes(tg)));
     }
@@ -290,9 +419,11 @@ class StateStore {
     } else if (status === 'in_progress') {
       list = list.filter(t => !t.is_completed);
     } else if (status === 'delayed') {
+      const doLogs = this.state.do_logs || [];
       list = list.filter(t => {
+        if (t.is_completed) return false;
         const isDateDelayed = isDelayedKST(t.due_date, t.is_completed);
-        const todoLogs = this.state.do_logs.filter(l => String(l.todo_id) === String(t.id));
+        const todoLogs = doLogs.filter(l => String(l.todo_id) === String(t.id));
         const actualMin = todoLogs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
         const isTimeOverrun = actualMin > (parseInt(t.estimated_minutes, 10) || 0);
         return isDateDelayed || isTimeOverrun;
@@ -303,11 +434,22 @@ class StateStore {
     const todoSort = sort || 'due_asc';
     list.sort((a, b) => {
       if (todoSort === 'priority_desc') {
-        return (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
+        const diff = (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
+        if (diff !== 0) return diff;
       } else if (todoSort === 'created_desc') {
-        return (b.created_at || '').localeCompare(a.created_at || '');
+        const diff = (b.created_at || '').localeCompare(a.created_at || '');
+        if (diff !== 0) return diff;
+      } else if (todoSort === 'due_asc') {
+        const diff = (a.due_date || '').localeCompare(b.due_date || '');
+        if (diff !== 0) return diff;
       }
-      return (a.due_date || '').localeCompare(b.due_date || '');
+      
+      // Deterministic & Stable tie-breaking
+      const sortOrderDiff = (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0);
+      if (sortOrderDiff !== 0) return sortOrderDiff;
+      const createdAtDiff = (a.created_at || '').localeCompare(b.created_at || '');
+      if (createdAtDiff !== 0) return createdAtDiff;
+      return String(a.id || '').localeCompare(String(b.id || ''));
     });
 
     return list;

@@ -71,23 +71,31 @@
     <!-- Authentication Overlay (T07-C03, T07-C97) -->
     <div id="authOverlay" class="auth-overlay">
       <div class="auth-card">
-        <h2 style="margin-bottom: 0.5rem; text-align: center; color: var(--color-primary);">Plan-Do-See Diary</h2>
-        <p style="text-align: center; font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 1.5rem;">Please sign in to access your secure diary.</p>
+        <div class="auth-tabs" id="authTabs" style="display: flex; margin-bottom: 1.25rem; border-bottom: 1px solid var(--color-border);">
+          <button type="button" class="auth-tab-btn active" id="authLoginTabBtn" style="flex: 1; padding: 0.6rem 0.5rem; background: none; border: none; border-bottom: 2px solid var(--color-primary); font-weight: 700; color: var(--color-primary); cursor: pointer; transition: all 0.2s ease;">로그인</button>
+          <button type="button" class="auth-tab-btn" id="authSignupTabBtn" style="flex: 1; padding: 0.6rem 0.5rem; background: none; border: none; border-bottom: 2px solid transparent; font-weight: 600; color: var(--color-text-muted); cursor: pointer; transition: all 0.2s ease;">회원가입</button>
+        </div>
+        <h2 id="authCardTitle" style="margin-bottom: 0.5rem; text-align: center; color: var(--color-primary);">Plan-Do-See Diary</h2>
+        <p id="authCardSubtitle" style="text-align: center; font-size: 0.85rem; color: var(--color-text-muted); margin-bottom: 1.5rem;">Please sign in to access your secure diary.</p>
         
         <form id="authForm">
           <div class="form-group">
-            <label class="form-label" for="authEmail">Email</label>
+            <label class="form-label" for="authEmail" id="authEmailLabel">Email</label>
             <input type="email" id="authEmail" class="input-field" required>
           </div>
           <div class="form-group">
-            <label class="form-label" for="authPassword">Password</label>
+            <label class="form-label" for="authPassword" id="authPasswordLabel">Password</label>
             <input type="password" id="authPassword" class="input-field" required> <!-- T07-C106 Password Masking -->
+          </div>
+          <div id="authRememberRow" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem;">
+            <input type="checkbox" id="remember-email" style="cursor: pointer;">
+            <label for="remember-email" id="rememberEmailLabel" style="font-size: 0.82rem; color: var(--color-text-muted); cursor: pointer; user-select: none;">이메일 저장</label>
           </div>
           <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
             <button type="submit" class="btn btn-primary" id="loginBtn" style="flex: 1;">Login</button>
             <button type="button" class="btn btn-secondary" id="signupBtn" style="flex: 1;">Sign Up</button>
           </div>
-          <div id="authErrorMsg" style="color: var(--color-danger); font-size: 0.8rem; text-align: center; margin-top: 0.8rem; height: 1rem;"></div>
+          <div id="authErrorMsg" style="color: var(--color-danger); font-size: 0.8rem; text-align: center; margin-top: 0.8rem; min-height: 1rem;"></div>
         </form>
       </div>
     </div>
@@ -109,6 +117,11 @@
                 <option value="high">높음</option>
                 <option value="medium">보통</option>
                 <option value="low">낮음</option>
+              </select>
+              <select id="planStatusFilter" class="select-field" style="font-size: 0.76rem; padding: 0.2rem 0.45rem; height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-bg-surface); color: var(--color-text-main); font-weight: 600;">
+                <option value="all">상태: 전체</option>
+                <option value="in_progress">진행 중</option>
+                <option value="completed">완료</option>
               </select>
               <select id="planSortSelect" class="select-field" style="font-size: 0.76rem; padding: 0.2rem 0.45rem; height: 30px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); background: var(--color-bg-surface); color: var(--color-text-main); font-weight: 600;">
                 <option value="created_desc">최신 등록</option>
@@ -187,6 +200,14 @@
     </nav>
   </div>
 
+  <!-- Global Loading Spinner Overlay (T08 UX Loading State) -->
+  <div id="globalLoadingOverlay" class="loading-overlay" aria-live="polite" aria-busy="true" style="display: none;">
+    <div class="loading-spinner-wrap">
+      <div class="loading-spinner" role="status" aria-label="Loading"></div>
+      <div class="loading-text" id="loadingText">데이터를 불러오는 중입니다...</div>
+    </div>
+  </div>
+
   <!-- ==================== MODALS ==================== -->
 
   <!-- 1. Plan Form Modal -->
@@ -231,6 +252,8 @@
             <label class="form-label" for="planHoursInput" id="modalPlanHoursLabel">목표 예상 시간 (분 단위) *</label>
             <input type="number" min="1" id="planHoursInput" class="input-field" placeholder="예: 120 (최소 1분)" required>
           </div>
+
+          <input type="hidden" id="planStatusInput" value="active">
 
           <div class="form-group">
             <label class="form-label" for="planCriteriaInput" id="modalPlanCriteriaLabel">목표 달성 기준</label>
@@ -334,11 +357,12 @@
       </div>
       <form id="execForm">
         <input type="hidden" id="execTodoId">
+        <input type="hidden" id="execLogId" value="">
         <div class="modal-body">
           <div id="execTodoSummary" style="font-size: 0.9rem; font-weight: 600; padding: 0.5rem; background: var(--color-bg-surface-subtle); border-radius: var(--radius-md);"></div>
 
           <!-- Live Timer Display with Absolute Timestamp Drift Correction -->
-          <div style="text-align: center; padding: 1rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card);">
+          <div id="execTimerSection" style="text-align: center; padding: 1rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card);">
             <div style="font-size: 0.75rem; color: var(--color-text-muted);" id="execLiveTimerLabel">실시간 측정 타이머</div>
             <div id="execLiveTimerDisplay" style="font-size: 2.2rem; font-weight: 800; font-family: var(--font-mono); margin: 0.25rem 0;">00:00:00</div>
             <div style="display: flex; justify-content: center; gap: 0.5rem;">
@@ -370,7 +394,7 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label" for="execMemoInput">실행 메모 / 참고사항</label>
+            <label class="form-label" for="execMemoInput" id="modalExecMemoLabel">실행 메모 / 참고사항</label>
             <textarea id="execMemoInput" class="auto-textarea" maxlength="2000" placeholder="실행 내용에 대한 메모나 참고사항을 적어주세요."></textarea>
           </div>
         </div>
@@ -429,7 +453,7 @@
   </div>
 
   <!-- 6. Dirty Form Confirmation Modal -->
-  <div class="modal-backdrop" id="dirtyConfirmModal" role="dialog" aria-modal="true" style="z-index: 1200;">
+  <div class="modal-backdrop" id="dirtyConfirmModal" role="dialog" aria-modal="true" tabindex="-1" style="z-index: 1200;">
     <div class="modal-dialog" style="max-width: 380px;">
       <div class="modal-header">
         <h3 class="modal-title" id="dirtyModalTitle">저장되지 않은 변경사항</h3>
@@ -450,10 +474,6 @@
       <div class="modal-header">
         <h3 class="modal-title" id="resetModalTitle">데이터 초기화 및 관리</h3>
         <button type="button" class="btn btn-secondary btn-icon" id="resetModalCloseBtn">✕</button>
-      </div>
-      <div class="modal-body" style="font-size: 0.88rem; line-height: 1.6;" id="resetModalBody">
-        현재 계정의 데이터를 0건으로 비우거나, 예시 데이터를 다시 채울 수 있습니다.<br><br>
-        <span style="font-size: 0.8rem; color: var(--color-danger);">(이 작업은 <strong>계정 내 모든 데이터를 삭제</strong>합니다.)</span>
       </div>
       <div class="modal-footer" style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
         <button type="button" class="btn btn-secondary" id="resetModalCancelBtn">취소</button>
@@ -494,16 +514,18 @@
   <div class="modal-backdrop" id="deleteAccountModal" role="dialog" aria-modal="true" style="z-index: 1300;">
     <div class="modal-dialog" style="max-width: 420px;">
       <div class="modal-header">
-        <h3 class="modal-title">계정 영구 삭제</h3>
+        <h3 class="modal-title" id="deleteAccountModalTitle">계정 영구 삭제</h3>
       </div>
-      <div class="modal-body" style="font-size: 0.88rem; line-height: 1.7;">
-        <strong style="color: var(--color-danger);">경고: 이 작업은 되돌릴 수 없습니다.</strong><br><br>
-        계정을 삭제하면 모든 Plan, ToDo, 실행 기록, 회고 데이터가 서버에서 <strong>영구적으로 삭제</strong>됩니다.<br><br>
-        정말로 계정을 삭제하시겠습니까?
+      <div class="modal-body" id="deleteAccountModalBody" style="font-size: 0.9rem; line-height: 1.6;">
+        <div style="font-size: 0.9rem; font-weight: 700; color: var(--color-danger);" id="deleteAccountWarningText">경고: 이 작업은 되돌릴 수 없습니다.</div>
+        <div style="font-size: 0.9rem; font-weight: 400; color: var(--color-text-main);" id="deleteAccountDescText">모든 기록이 영구적으로 삭제됩니다.</div>
+        <div style="font-size: 0.9rem; font-weight: 400; color: var(--color-text-main); margin-top: 0.5rem;" id="deleteAccountPromptText">계속하려면 아래 확인 문구를 입력하세요:</div>
+        <div style="font-size: 0.9rem; font-weight: 700; color: var(--color-danger); user-select: none; margin: 0.25rem 0 0.5rem 0;" id="deleteAccountPhraseDisplay">계정을 삭제하겠습니다.</div>
+        <input type="text" id="deleteAccountInput" class="input-field" placeholder="계정을 삭제하겠습니다." autocomplete="off" style="width: 100%;">
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" id="deleteAccountCancelBtn">취소</button>
-        <button type="button" class="btn btn-danger" id="deleteAccountConfirmBtn">계정 영구 삭제</button>
+        <button type="button" class="btn btn-danger" id="deleteAccountConfirmBtn" disabled>계정 영구 삭제</button>
       </div>
     </div>
   </div>
@@ -512,13 +534,12 @@
   <div class="modal-backdrop" id="migrationModal" role="dialog" aria-modal="true" style="z-index: 1250;">
     <div class="modal-dialog" style="max-width: 440px;">
       <div class="modal-header">
-        <h3 class="modal-title">로컬 데이터 마이그레이션</h3>
+        <h3 class="modal-title" id="migrationModalTitle">로컬 데이터 마이그레이션</h3>
         <button type="button" class="btn btn-secondary btn-icon" id="migrationModalCloseBtn">✕</button>
       </div>
-      <div class="modal-body" style="font-size: 0.88rem; line-height: 1.7;">
-        기존 로컬(T06) 일기 데이터가 감지되었습니다.<br>
-        현재 계정으로 가져오시겠습니까?<br><br>
-        <span style="font-size: 0.8rem; color: var(--color-text-muted);">(가져오면 해당 데이터가 서버 계정에 연결됩니다.)</span>
+      <div class="modal-body" style="font-size: 0.88rem; line-height: 1.7;" id="migrationModalBody">
+        <span id="migrationModalBodyText">기존 로컬(T06) 일기 데이터가 감지되었습니다.<br>현재 계정으로 가져오시겠습니까?</span><br><br>
+        <span style="font-size: 0.8rem; color: var(--color-text-muted);" id="migrationModalNoticeText">(가져오면 해당 데이터가 서버 계정에 연결됩니다.)</span>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" id="migrationSkipBtn">건너뛰기</button>
@@ -528,7 +549,7 @@
   </div>
 
   <!-- Optional Environment Loader (Injected via GitHub Actions or local dev) -->
-  <script src="env.js" onerror="/* optional environment */"></script>
+  <script src="env.js"></script>
 
   <!-- Application Bootstrap Script -->
   <script type="module" src="js/app.js?v=2.0.38"></script>

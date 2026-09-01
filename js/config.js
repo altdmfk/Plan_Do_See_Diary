@@ -15,11 +15,9 @@ export const CONFIG = {
   },
   DEFAULT_THEME: 'pastel-pink',
 
-
-  
   // Storage Keys
   STORAGE_KEYS: {
-    ACTIVE_THEME: 'pds_active_theme',
+    ACTIVE_THEME: 'pds_theme_pref',
     DB_STORE_PREFIX: 'pds_user_cache_v2_',
     AUTH_SESSION: 'pds_auth_session'
   },
@@ -34,6 +32,7 @@ export const CONFIG = {
   // Limits & Safeguards
   MAX_IMPORT_SIZE_BYTES: 5 * 1024 * 1024, // 5 MB
   TOAST_DURATION_MS: 3500,
+  PLAN_PAGE_SIZE: 10,
 
   // Synthetic Data Seeding Toggle (Set to false for completely blank diary)
   ENABLE_SYNTHETIC_SEED: true,

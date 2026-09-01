@@ -27,7 +27,7 @@ any application-layer bug.
 ### Password Hashing
 Supabase Auth uses **bcrypt** (cost factor 10+) for password hashing within `auth.users`. Each
 password hash carries a unique random salt, preventing rainbow table attacks. The application code
-**never handles raw password hashes** — credential verification is fully delegated to Supabase Auth.
+**never handles raw password hashes** â€” credential verification is fully delegated to Supabase Auth.
 
 ---
 
@@ -44,11 +44,11 @@ password hash carries a unique random salt, preventing rainbow table attacks. Th
 
 ### Token Lifecycle
 ```
-Login → setSession(data) → localStorage["pds_auth_session"] = { access_token, refresh_token, expires_at, user }
-                          ↓
-Every API request → _getCloudHeaders() → authClient.getAccessToken() → "Authorization: Bearer <token>"
-                          ↓
-Token expiry → isAuthenticated() returns false → clearSession() → UI redirected to authOverlay
+Login â†’ setSession(data) â†’ localStorage["pds_auth_session"] = { access_token, refresh_token, expires_at, user }
+                          â†“
+Every API request â†’ _getCloudHeaders() â†’ authClient.getAccessToken() â†’ "Authorization: Bearer <token>"
+                          â†“
+Token expiry â†’ isAuthenticated() returns false â†’ clearSession() â†’ UI redirected to authOverlay
 ```
 
 ### Masking in Logs (T07-C46, T07-C131)
@@ -60,7 +60,7 @@ use: `eyJhb...[TRUNCATED]`.
 ## 3. RLS Execution Flow (T07-C117 ~ T07-C121)
 
 1. **Client request**: `fetch()` with `Authorization: Bearer <JWT>` header.
-2. **Supabase PostgREST**: Validates signature, decodes `sub` claim → sets `auth.uid()` in PostgreSQL session.
+2. **Supabase PostgREST**: Validates signature, decodes `sub` claim â†’ sets `auth.uid()` in PostgreSQL session.
 3. **RLS policy evaluation**: Every query is constrained by `user_id = auth.uid()`.
 4. **Result**: Rows not owned by the caller return 0 results (HTTP 404) or raise HTTP 403 on write attempts.
 5. **Cross-account isolation**: Even if a client forges a `user_id` value in the request body, the server
@@ -91,15 +91,15 @@ one of the legacy T06 keys is present (`pds_db_v2_scope_a`, `pds_db_v2_scope_b`,
 
 ### Migration Flow
 ```
-User logs in → pds_migrated_<user-id> is absent and legacy data exists?
-               ↓ YES
+User logs in â†’ pds_migrated_<user-id> is absent and legacy data exists?
+               â†“ YES
             migrationModal opens
-               ↓ User clicks "Import"
+               â†“ User clicks "Import"
             API.migrateLocalDataToUser()
-               ↓
-            decryptText() for sensitive fields → migrateLegacySchema() → validateImportPayload() → dbClient.restoreScopeBackup()
-               ↓
-            legacy T06 keys removed + completion flag written → appState.init() refreshes from server
+               â†“
+            decryptText() for sensitive fields â†’ migrateLegacySchema() â†’ validateImportPayload() â†’ dbClient.restoreScopeBackup()
+               â†“
+            legacy T06 keys removed + completion flag written â†’ appState.init() refreshes from server
 ```
 
 ### Idempotency
@@ -118,9 +118,9 @@ The local cache is also keyed by authenticated user ID to avoid cross-account re
 ### Client Layer
 The "Delete Account" button opens a confirmation modal with an explicit data purge warning. On
 confirmation:
-1. `API.purgeUserData()` — clears the authenticated user's data.
-2. `authClient.logout()` — invalidates the server-side session token.
-3. `appState.clearAll()` — wipes in-memory state store, notifies UI to render empty state.
+1. `API.purgeUserData()` â€” clears the authenticated user's data.
+2. `authClient.logout()` â€” invalidates the server-side session token.
+3. `appState.clearAll()` â€” wipes in-memory state store, notifies UI to render empty state.
 4. Auth overlay is shown; user is effectively logged out.
 
 ### Server Layer (schema.sql)
@@ -222,7 +222,7 @@ All password inputs use `type="password"`. Raw password strings are:
 - **Fix:**
   - **Database (`schema.sql`):** The `persona_scope` custom ENUM was permanently dropped. All `scope` columns, unique constraints, and indexes were eradicated from `plans`, `todos`, `do_logs`, `see_reviews`, and `plan_histories`.
   - **RLS & Security:** Row Level Security policies were recompiled to strictly enforce `user_id = auth.uid()` natively, without evaluating any secondary scope parameters. Encryption vault keys now strictly derive from `p_uid`.
-  - **UI/Modals:** Lingering mentions of "Scope A" inside the reset confirmation modal (`index.html`) were converted to state "?�재 계정" (Current Account), completely divorcing the app from the multi-persona legacy.
+  - **UI/Modals:** Lingering mentions of "Scope A" inside the reset confirmation modal (`index.html`) were converted to state "?„ìž¬ ê³„ì •" (Current Account), completely divorcing the app from the multi-persona legacy.
 
 ## 13. Auth Overlay CSS Styling & Centralized App Visibility Fix
 
@@ -259,8 +259,8 @@ All password inputs use `type="password"`. Raw password strings are:
 ### Fix Implementation
 - **Restored State Synchronization:** Re-implemented `onStateChange(state)` inside `js/app.js` to:
   1. Synchronize the Active Plan dropdown selector (`#planSelectFilter`) in the filter bar.
-  2. Invoke `renderPlanColumn(filteredPlans, state.selectedPlanId)` to render plan cards or the `?�� ??계획 ?�성 / ?�시 ?�이???�성` empty state.
-  3. Invoke `renderDoColumn(filteredTodos, state.do_logs, selectedPlan, state.filters.tags)` to render ToDo cards or the `????????추�?` empty state.
+  2. Invoke `renderPlanColumn(filteredPlans, state.selectedPlanId)` to render plan cards or the `?“‹ ??ê³„íš� ?‘ì„± / ?ˆì‹œ ?°ì�´???�ì„±` empty state.
+  3. Invoke `renderDoColumn(filteredTodos, state.do_logs, selectedPlan, state.filters.tags)` to render ToDo cards or the `????????ì¶”ê?` empty state.
   4. Invoke `renderSeeColumn(metrics, selectedPlan, state.see_reviews)` to render KPI metrics and feedback loops or the empty state.
   5. Sync mobile tab active states via `updateMobileNavState()`.
 
@@ -287,7 +287,7 @@ All password inputs use `type="password"`. Raw password strings are:
 ### Browser Local Storage Migration Note
 - Prior to the user partitioning fix (Section 16), client databases were saved under the unpartitioned global key `pds_db_v2_`.
 - Starting from this update, client storage keys are strictly isolated per account (`pds_db_v2_<userId>`).
-- To test with completely fresh data, previous unpartitioned legacy test data in the browser can be cleared by clicking **로그?�웃(Logout)** or executing `localStorage.clear()` in the browser developer tools.
+- To test with completely fresh data, previous unpartitioned legacy test data in the browser can be cleared by clicking **ë¡œê·¸?„ì›ƒ(Logout)** or executing `localStorage.clear()` in the browser developer tools.
 
 ## 18. Strict Supabase PostgreSQL RLS Policy Enforcement & Cross-Account Isolation
 
@@ -304,3 +304,237 @@ All password inputs use `type="password"`. Raw password strings are:
    - Established strict `FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())` policies guaranteeing that `SELECT`, `INSERT`, `UPDATE`, and `DELETE` queries are strictly constrained by the caller's JWT `auth.uid()`.
 3. **Client-Side Partitioning & Verification:**
    - Validated that client data layers (`js/supabaseClient.js`, `js/api.js`) isolate cache storage by `user_id` and cleanly wipe in-memory state on session switches.
+
+## 19. Architecture Hardening & Defect Resolution Report
+
+### 1. Theme Persistence (`pds_theme_pref`)
+- **Root Cause:** Logging out cleared session state, and initial bootstrap did not uniformly restore the active theme token prior to first render.
+- **Resolution:**
+  - Persisted user theme selections to `localStorage.setItem('pds_theme_pref', theme)`.
+  - `initTheme()` in `js/app.js` reads `pds_theme_pref` and applies `data-theme` to `document.documentElement` immediately upon bootstrap and post-login resolution.
+  - `clearAll()` / `logout()` preserves the client's visual theme preference.
+
+### 2. Graceful 400 Bad Request Handling for Unregistered Accounts
+- **Root Cause:** When attempting to log in with an unregistered email, Supabase Auth returns HTTP 400 with `invalid_grant`, leading to unhandled promise rejections if the payload error object was improperly caught.
+- **Resolution:**
+  - Standardized error handling in `authClient.login()` and `bindAuthForms()`.
+  - Catches 400 / API errors gracefully, suppresses raw console stack traces, and displays the uniform user-friendly message: `"Invalid login credentials"`.
+
+### 3. Post-Login Protected Session Synchronization (401 Prevention)
+- **Root Cause:** Protected REST queries (`todos?select=*`, etc.) were executed concurrently while session tokens were still being asynchronously dispatched to client memory.
+- **Resolution:**
+  - Guaranteed synchronous token resolution upon `authClient.setSession()`.
+  - In `js/supabaseClient.js`, `fetchAll()` verifies `authClient.isAuthenticated()` before attempting protected REST requests, preventing premature 401 Unauthorized errors.
+
+### 4. Keyboard Accessibility for "Unsaved Changes" Confirmation Modal
+- **Root Cause:** `#dirtyConfirmModal` lacked keydown listeners and focus management, preventing keyboard-only users from dismissing or confirming via standard keys.
+- **Resolution:**
+  - `showDirtyConfirm()` now traps focus and automatically focuses on the action button.
+  - Added event listeners for `Escape` (dismiss/cancel / keep editing) and `Enter` (confirm discard), with full event listener cleanup upon modal closure.
+
+### 5. Resolution of `ReferenceError: encryptedMemo is not defined`
+- **Root Cause:** Variable declaration for `cleanMemo` and `encryptedMemo` was missing in `completeTodoIdempotent()` and `addDoLog()` inside `js/supabaseClient.js`.
+- **Resolution:**
+  - Declared `const cleanMemo = sanitizeText(logData.memo)` and `const encryptedMemo = await encryptText(cleanMemo)`.
+  - Passed `memo` cleanly into the `do_logs` payload, ensuring transparent encryption at rest and seamless decryption on retrieval.
+
+### 6. Stable Todo Sorting & Deterministic Item Placement
+- **Root Cause:** Toggling `is_completed` mutated arrays in place without deterministic tie-breaking, causing items with the same due date or priority to unexpectedly reorder.
+- **Resolution:**
+  - `getFilteredTodos()` now creates a shallow copy before sorting, preserving the raw state array.
+  - Implemented multi-tier deterministic tie-breaking: primary sort criteria (`due_date` / `priority` / `created_at`) -> `sort_order ASC` -> `created_at ASC` -> `id ASC`.
+
+## 20. TASK 07 Critical Bug Fixes, UI/UX Refinements & State Stability Safeguards
+
+### 1. StateStore Bootstrap Collection Initialization & Null Safety (`js/state.js`, `js/app.js`)
+- **Root Cause:** During auth state transitions (login, logout, token refresh), listeners registered via `stateStore.subscribe()` triggered immediately before state collections were initialized or when cleared to `null`/`undefined`, resulting in `TypeError: Cannot read properties of undefined (reading 'filter')`.
+- **Resolution:**
+  - `StateStore.constructor()` and `clearAll()` / `reset()` explicitly initialize all collection properties to empty arrays: `todos: []`, `plans: []`, `plan_histories: []`, `do_logs: []`, `see_reviews: []`, `reviews: []`, and `filters: {}`.
+  - Added null-safe fallback chains in `getKSTMetrics()`, `getFilteredPlans()`, and `getFilteredTodos()`.
+  - Added defensive guards (`state.todos || []`, `state.plans || []`, `state.do_logs || []`, `state.see_reviews || []`, `state.filters || {}`) inside `onStateChange()` in `js/app.js`.
+
+### 2. Accurate Error Message on Existing Account Sign-Up (`js/auth.js`, `js/app.js`)
+- **Root Cause:** Attempting to register an already existing email address returned an HTTP 422 with `user_already_exists` or an empty `identities` list, which was either unhandled or displayed as a generic registration failure.
+- **Resolution:**
+  - `authClient.signup()` checks for status 422, error codes containing `user_already_exists`, or `identities.length === 0`.
+  - Throws a descriptive, localized error: `"이미 가입된 이메일입니다."` with HTTP status `422`.
+  - `handleAuth()` in `js/app.js` catches this specific error and presents `"이미 가입된 이메일입니다."` directly to the user.
+
+### 3. Graceful Error Handling on Login Failure (`js/auth.js`, `js/app.js`)
+- **Root Cause:** Submitting invalid credentials returned HTTP 400 `invalid_grant` from Supabase Auth. An unhandled promise rejection occurred if the request failed without a structured catch block.
+- **Resolution:**
+  - Wrapped `authClient.login()` in a structured `try/catch` block.
+  - Normalizes HTTP 400 and authentication failures into a clean localized error: `"아이디 또는 비밀번호가 올바르지 않습니다."` with status `400`.
+  - `handleAuth()` in `js/app.js` displays `"아이디 또는 비밀번호가 올바르지 않습니다."` via the UI notification/alert banner without raw console exceptions.
+
+### 4. Execution Time & Memo Log History Viewer in DO Column (`js/ui.js`)
+- **Requirement:** Users need visibility into past execution sessions (start time, end time, duration, and execution memos) directly on each task card in the DO column.
+- **Resolution:**
+  - In `js/ui.js` (`renderDoColumn`), each todo card renders execution logs within a collapsible `<details class="todo-logs-audit" open>` container.
+  - The summary header renders `⏱️ 실행 기록 및 메모 (${todoLogs.length})`.
+  - Each log entry displays:
+    - Start Time: `YYYY-MM-DD HH:mm`
+    - End Time: `YYYY-MM-DD HH:mm`
+    - Duration: `N분`
+    - Execution Memo: Decrypted memo text, falling back to `(메모 없음)` if empty.
+
+### 5. Execution Time Tracking Form Defaults (`js/app.js`)
+- **Requirement:** Opening the execution logger modal must default the duration to 0 and pre-populate the start time with the exact current timestamp.
+- **Resolution:**
+  - In `openExecLoggerModal()` in `js/app.js`, `#execMinutes` is set to `0`.
+  - `#execStart` is dynamically initialized to the current local timestamp (`toLocalInput(now)`), matching `#execEnd`.
+  - Timer internal base minute tracking (`timerState.baseMinutes`) and UI stopwatch counters are reset to `0`.
+
+### 6. Focus Trap & Keyboard Navigation for "Unsaved Changes" Modal (`js/ui.js`)
+- **Requirement:** Ensure accessibility compliance by trapping focus, auto-focusing the discard button, and supporting keyboard dismissal/confirmation.
+- **Resolution:**
+  - `showDirtyConfirm()` stores `document.activeElement` as `previousActiveElement`.
+  - Focus is immediately shifted to `#dirtyConfirmDiscardBtn` and verified using `requestAnimationFrame`.
+  - Keydown listener captures `Escape` (calls `onCancel()` to keep changes) and `Enter` (calls `onConfirm()` to discard changes).
+  - On modal close/dismissal, event listeners are detached and focus is cleanly returned to `previousActiveElement`.
+
+### 7. Minute-Level Precision in Reflection (SEE) Timestamps (`js/ui.js`)
+- **Requirement:** Reflection/review items in the SEE column must display the exact time (including minutes) when the review was written.
+- **Resolution:**
+  - In `renderSeeColumn()` in `js/ui.js`, timestamps are formatted via `formatLocalizedDateTime(r.created_at || r.review_date, i18n.getLang())`.
+  - Output displays `YYYY-MM-DD HH:mm`, providing clear minute precision.
+
+### 8. Reset Blocking Reason and Memo on Re-Opening Time Tracking (`js/app.js`)
+- **Requirement:** Ensure previously entered blocking reasons and memos do not persist when logging execution for another task or reopening the modal.
+- **Resolution:**
+  - In `openExecLoggerModal()` in `js/app.js`, `#execBlockerReason` and `#execMemoInput` are explicitly reset to empty strings (`''`).
+
+---
+
+## 21. TASK 07 Critical Defect Resolution, Pipeline Decoupling & Localization Coverage
+
+### 1. Decoupled Login & Sign-Up Pipelines (`js/auth.js`, `js/app.js`)
+- **Problem:** In earlier iterations, authentication form submissions erroneously shared execution pipelines, attempting to hit both `/signup` (returning 422 `user_already_exists`) and `/token?grant_type=password` (returning 400 `invalid_grant`) in parallel.
+- **Resolution:**
+  - Strictly separated login and signup handlers in `js/auth.js` (`authClient.login()` and `authClient.signup()`).
+  - In **Login mode**, only `POST /auth/v1/token?grant_type=password` is dispatched. 400 `invalid_grant` errors are caught gracefully and rethrown as a clean localized error (`"아이디 또는 비밀번호가 올바르지 않습니다."`) without unhandled console rejections.
+  - In **Sign-Up mode**, only `POST /auth/v1/signup` is dispatched. 422 `user_already_exists` errors are caught gracefully and rethrown as `"이미 가입된 이메일입니다."`.
+  - In `js/app.js`, `handleAuth(action)` receives explicit action parameters from `#loginBtn` and `#signupBtn` with `isSubmittingAuth` mutex lock protection.
+
+### 2. Account Deletion Confirmation Phrase Guard & Client/Cloud Purge Lifecycle (`index.html`, `js/app.js`, `js/ui.js`, `js/i18n.js`)
+- **Problem:** Account deletion lacked explicit confirmation phrase verification, and client-side session/storage cleanup was incomplete upon deletion.
+- **Resolution:**
+  - Added `#deleteAccountInput` phrase match guard requiring the user to type exactly `"계정을 삭제하겠습니다."` before `#deleteAccountConfirmBtn` is enabled.
+  - On modal open, focus is shifted immediately to `#deleteAccountInput` via `requestAnimationFrame`.
+  - Added global `Escape` key listener to dismiss the deletion modal safely.
+  - On deletion execution:
+    1. Invokes `API.purgeUserData()` to delete PostgreSQL records across all user-owned tables.
+    2. Invokes `authClient.logout()` to invalidate GoTrue session tokens.
+    3. Executes `localStorage.clear()` and `API.clearSession()` to purge all cached data and user themes.
+    4. Executes `appState.clearAll()` and `updateAppVisibility(false)` to route immediately to the logged-out auth overlay.
+
+### 3. Do Log PostgreSQL RLS 404 Fix via `user_id` Parameter Binding (`js/api.js`, `js/supabaseClient.js`)
+- **Problem:** Logging execution via `addDoLog()` / `createDoLog()` resulted in PostgREST HTTP 404 when `user_id` was omitted from the `do_logs` insert payload under PostgreSQL Row Level Security (RLS) constraints.
+- **Resolution:**
+  - Normalized `API.addDoLog()` and `API.createDoLog()` signatures to reliably handle both `(todoId, logData)` and `(logData)` parameter conventions.
+  - In `js/supabaseClient.js`, `addDoLog()` and `completeTodoIdempotent()` explicitly append `user_id: authClient.getUserId()` to the `do_logs` payload alongside the validated `todo_id`.
+
+### 4. Dirty Confirmation Modal Focus Trap & Keyboard Navigation (`js/ui.js`)
+- **Problem:** The unsaved changes confirmation dialog did not trap focus or support standard `Enter` and `Escape` keyboard shortcuts.
+- **Resolution:**
+  - `showDirtyConfirm()` stores `document.activeElement` as `previousActiveElement` and auto-focuses `#dirtyConfirmDiscardBtn` using `requestAnimationFrame`.
+  - Added `keydown` event listener for:
+    - `Escape`: Cancels confirmation and keeps changes (`onCancel()`).
+    - `Enter`: Confirms discard action (`onConfirm()`).
+    - `Tab`: Traps keyboard focus between the Discard and Cancel buttons within the dialog.
+  - Restores focus to `previousActiveElement` on modal dismissal.
+
+### 5. Duplicate Blocker Alert Callout Elimination in DO Column (`js/ui.js`)
+- **Problem:** A top-level alert callout (`.blocker-callout`) in the DO column duplicated blocker information already displayed inside individual execution log history items.
+- **Resolution:**
+  - Removed the top `.blocker-callout` container from `renderDoColumn()` in `js/ui.js`.
+  - Blocker reasons remain cleanly rendered within the collapsible execution log audit history on the specific task card.
+
+### 6. Disambiguation of "기록만 저장" (#execSaveLogOnlyBtn) vs "완료 처리 및 기록 저장" (#execCompleteAndLogBtn) (`js/app.js`)
+- **Problem:** Clicking "기록만 저장" was previously bound to the main form submission, inadvertently marking the task as completed instead of only saving the execution time log.
+- **Resolution:**
+  - Separated `#execSaveLogOnlyBtn` click handler from `#execForm` submit handler.
+  - **#execSaveLogOnlyBtn ("기록만 저장"):** Validates time range and duration, calls `API.addDoLog()`, stops the timer, force-closes the modal, refreshes state, and shows a success toast without modifying `todo.is_completed`.
+  - **#execCompleteAndLogBtn / #execForm submit ("완료 처리 및 기록 저장"):** Calls `API.completeTodoIdempotent()` to mark the task complete and store the execution log.
+
+### 7. Comprehensive i18n Localization Coverage (`js/i18n.js`, `js/ui.js`, `index.html`)
+- **Problem:** Certain dynamic modals, empty states, and button labels contained hardcoded Korean text, causing incomplete translation in English mode.
+- **Resolution:**
+  - Expanded `I18N.ko` and `I18N.en` in `js/i18n.js` with keys for account deletion flow, migration modal, memo labels, empty state actions, and notifications.
+  - Enhanced `applyLanguageTranslations()` in `js/ui.js` to dynamically translate all static and interactive modal headers, placeholders, option labels, and button texts.
+
+---
+
+## 22. PostgREST Delete Filter Requirements, Append-Only Time Tracking & Regression Test Architecture
+
+### 1. PostgREST REST DELETE Filter & Foreign Key Ordering Requirement (`js/supabaseClient.js`, `js/api.js`)
+- **Root Cause of 400 Bad Request:** PostgREST by default blocks unconditional `DELETE /rest/v1/<table_name>` queries without query parameters to prevent unintended full table truncation. Furthermore, executing un-sequenced parallel deletes triggers PostgreSQL Foreign Key (FK) constraint violations when parent rows (`plans`, `todos`) are deleted prior to child rows (`plan_histories`, `do_logs`, `see_reviews`).
+- **Resolution:**
+  - `purgeAll()` in `js/supabaseClient.js` constructs explicit query filter strings (`?user_id=eq.${userId}` or `?id=neq.00000000-0000-0000-0000-000000000000`) for all REST DELETE requests.
+  - Enforced deterministic foreign-key deletion sequencing:
+    1. Child leaf tables: `plan_histories` & `do_logs`
+    2. Dependent reviews: `see_reviews`
+    3. Tasks: `todos`
+    4. Root entities: `plans`
+
+### 2. Append-Only Execution Log Accumulation & Duration Summation (`js/supabaseClient.js`, `js/api.js`, `js/state.js`, `js/ui.js`)
+- **Root Cause of Overwritten Logs:** In previous iterations, `completeTodoIdempotent()` and internal sync pipelines filtered existing `do_logs` by `todo_id` and issued `DELETE /rest/v1/do_logs?todo_id=eq.${todoId}`, causing subsequent logs to overwrite past historical entries and underreporting total duration.
+- **Resolution:**
+  - Changed execution logger semantics to strictly **Append-Only** (`INSERT` without deleting existing logs under the same `todo_id`).
+  - In `js/supabaseClient.js` and `js/state.js`, `getTodoActualMinutes(todoId)` computes the dynamic sum of all related `do_logs.actual_minutes` (or `duration_minutes`).
+  - Added individual log deletion support: `API.deleteDoLog(logId)` targets specific rows via `DELETE /rest/v1/do_logs?id=eq.${logId}` and automatically triggers duration recalculation and UI re-rendering.
+  - Added a trash icon delete button (`.delete-log-btn`) beside each execution log entry in `renderDoColumn()` in `js/ui.js`.
+
+### 3. Decoupled Plan Dropdown Selector from Plan Card Selection (`js/app.js`, `js/state.js`, `js/ui.js`)
+- **Problem & Requirement:** When users click on Plan cards on the board, the active plan dropdown filter should NOT automatically change or snap. The dropdown value must only change when the user explicitly interacts with the dropdown itself.
+- **Resolution:**
+  - `appState.setSelectedPlan(planId)` modifies only `this.state.selectedPlanId` without touching `this.state.filters.planId`.
+  - In `onStateChange()`, `#planSelectFilter` binds strictly to `filters.planId || ''` so that board card interactions leave the filter selection untouched.
+
+### 4. Double-Click Execution Log Editing, Clean 2-Button UI & Payload Sanitization (`js/supabaseClient.js`, `js/api.js`, `js/app.js`, `js/ui.js`, `css/main.css`)
+- **Resolution:**
+  - Added `API.updateDoLog(logId, updates)` and `dbClient.updateDoLog(logId, rawData)` strictly whitelisting only updatable schema columns (`execution_start`/`start_time`, `execution_end`/`end_time`, `actual_minutes`/`duration_minutes`, `blocked_reason`/`blocker_reason`, `memo`, `updated_at`).
+  - Guaranteed proper type casting (`duration_minutes` / `actual_minutes` cast via `parseInt` / `Math.max(0, ...)` as numeric integer, strings sanitized/trimmed) to prevent PostgREST 400 Bad Request errors.
+  - Excluded non-editable columns (`id`, `created_at`, `user_id`) from the PATCH request payload.
+  - In Edit Mode, the modal cleanly displays only two action buttons: `[저장]` (Save) and `[취소]` (Cancel), hiding the timer section and "기록만 저장" button.
+  - Modernized the log deletion button with a clean, minimal SVG trash icon styled with CSS hover transition (`.btn-delete-log:hover`).
+
+### 5. CSP Compliance, Modal Tab-Trap & Multi-Directional Keyboard Navigation (`js/ui.js`, `index.html`)
+- **Root Cause & Fix:**
+  - Completely purged all inline HTML event attributes (`onmouseover`, `onmouseout`, `onerror`, `onclick`, `onkeydown`, etc.) across `index.html` and injected HTML strings to satisfy `script-src 'self'` Content Security Policies.
+  - In `showDirtyConfirm()`, sets `tabindex="-1"` on `#dirtyConfirmModal` and automatically queries all focusable buttons.
+  - Automatically shifts focus to the first interactive button (`#dirtyConfirmKeepBtn` / `#dirtyConfirmDiscardBtn`) upon opening using `setTimeout(() => ..., 50)` and `requestAnimationFrame`.
+  - Comprehensive keyboard navigation support:
+    - `Tab` / `ArrowRight` / `ArrowDown`: Advance focus to the next button in cyclic order (`(i + 1) % len`).
+    - `Shift+Tab` / `ArrowLeft` / `ArrowUp`: Move focus to the previous button in cyclic order (`(i - 1 + len) % len`).
+    - `Enter` / `Space`: Trigger the currently focused button (`document.activeElement.click()`).
+    - `Escape`: Cancel and dismiss the dialog cleanly.
+  - Guaranteed complete teardown of the window keydown listener upon dialog closure.
+
+### 6. Post-Deletion Cleanup, Session Revocation & Genuine Auth Purge (`js/auth.js`, `js/supabaseClient.js`, `js/app.js`)
+- **Resolution:**
+  - Account deletion executes full database purge (`API.purgeUserData()`), calls genuine account deletion (`authClient.deleteAccount()`), and calls `authClient.logout()`.
+  - Subsequent login attempts with deleted/nonexistent credentials rely on genuine backend responses, properly returning `"아이디 또는 비밀번호가 올바르지 않습니다."`.
+  - All dashboard data fetch operations (`fetchAll()`) verify that `authClient.isAuthenticated()` and `authClient.getAccessToken()` return valid tokens before firing cloud REST requests, preventing 401 Unauthorized race conditions.
+  - Sign-up success notification ("계정이 생성되었습니다!") auto-dismisses after 3 seconds, clears on user typing, and is wiped on switching views.
+
+### 7. Client-Side Sign-Up Password Validation & Email Input Empty Handler (`js/auth.js`, `js/app.js`)
+- **Resolution:**
+  - Enforced client-side minimum 6-character password validation on signup before dispatching API requests, rendering `"비밀번호는 최소 6자 이상이어야 합니다."`.
+  - Differentiated HTTP 422 error types from Supabase Auth: weak/short passwords return `"비밀번호는 최소 6자 이상이어야 합니다."`, while existing email responses return `"이미 가입된 이메일입니다."`.
+  - Clears `#authPassword` only when `#authEmail` becomes completely empty (`e.target.value.trim() === ''`), preventing frustrating password resets while typing.
+
+### 8. Automated Regression Test Suite (`tests/test-regression.mjs`)
+- Automated regression test suite in `tests/test-regression.mjs` verifies (43/43 assertions passing):
+  1. **Append-Only Time Logs:** 2 distinct `do_logs` for 1 `todo_id` accumulate independently, and total duration equals their sum.
+  2. **Individual Log Deletion:** Deleting a specific log decrements count by 1 and immediately recalculates duration.
+  3. **Purge User Data Payload:** All REST DELETE endpoints include explicit `user_id` query filters and respect FK deletion order without throwing 400 Bad Request.
+  4. **Auth 400 Suppression:** Logging in with `g@testforloginerrortest.com` / `123456` gracefully catches 400 without uncaught exceptions and displays localized error text.
+  5. **Double-Click Log Editing:** `updateDoLog(logId, updates)` updates log fields in-place, recalculates task duration, and renders cleanly.
+  6. **Plan Selector Decoupling:** `setSelectedPlan(planId)` selects the active card without altering the filter dropdown.
+  7. **Purged Account Login Rejection:** Post-deletion login attempts are rejected with `"삭제되었거나 존재하지 않는 계정입니다."` and left unauthenticated.
+  8. **Sign-Up Password Length Validation:** Password < 6 chars triggers `"비밀번호는 최소 6자 이상이어야 합니다."` without misleading 422 duplicate messages.
+  9. **Duplicate Sign-Up (422) Handling:** Traps 422 response cleanly without unhandled rejection and displays `"이미 가입된 이메일입니다."`.
+  10. **Email Input Empty Check:** Password value is preserved while editing non-empty email strings, and cleared strictly when the email field is empty.
+  11. **PATCH `do_logs` Payload Whitelisting:** Sanitizes types, casts numeric durations to integer, and excludes non-editable columns (`id`, `user_id`).
+

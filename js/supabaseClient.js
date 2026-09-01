@@ -10,15 +10,33 @@ import { encryptText, decryptText } from './crypto.js';
 import { sanitizeText, clampNum } from './validators.js';
 import { authClient } from './auth.js';
 
-// Safe localStorage abstraction
+// Isolated Multi-Tab Session Configuration (window.sessionStorage)
+export const supabaseConfig = {
+  auth: {
+    storage: typeof window !== 'undefined' ? window.sessionStorage : (typeof sessionStorage !== 'undefined' ? sessionStorage : null),
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  }
+};
+
+// Safe tab-isolated storage abstraction
 const storage = {
-  getItem: (k) => (typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null),
-  setItem: (k, v) => (typeof localStorage !== 'undefined' ? localStorage.setItem(k, v) : null)
+  getItem: (k) => {
+    if (typeof sessionStorage !== 'undefined') {
+      const val = sessionStorage.getItem(k);
+      if (val !== null) return val;
+    }
+    return typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null;
+  },
+  setItem: (k, v) => {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(k, v);
+    if (typeof localStorage !== 'undefined') localStorage.setItem(k, v);
+  }
 };
 
 class SupabaseEngine {
   constructor() {
-    
     this.memoryStore = new Map();
     this.inFlightLocks = new Map();
 
@@ -35,8 +53,6 @@ class SupabaseEngine {
 
     this.isCloudConfigured = hasUrl && hasKey;
   }
-
-  
 
   _getCurrentUserKey() {
     return authClient.getUserId() || 'anon';
@@ -65,13 +81,11 @@ class SupabaseEngine {
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed.do_logs)) {
-          const logMap = new Map();
-          for (const l of parsed.do_logs) {
-            logMap.set(String(l.todo_id), l);
-          }
-          parsed.do_logs = Array.from(logMap.values());
-        }
+        if (!Array.isArray(parsed.plans)) parsed.plans = [];
+        if (!Array.isArray(parsed.plan_histories)) parsed.plan_histories = [];
+        if (!Array.isArray(parsed.todos)) parsed.todos = [];
+        if (!Array.isArray(parsed.do_logs)) parsed.do_logs = [];
+        if (!Array.isArray(parsed.see_reviews)) parsed.see_reviews = [];
         this.memoryStore.set(userKey, parsed);
         return parsed;
       } catch (e) {
@@ -95,18 +109,16 @@ class SupabaseEngine {
 
   _createSeedData() {
     const today = getKSTToday();
-    
+
     const planId = crypto.randomUUID();
     const todoId1 = crypto.randomUUID();
     const todoId2 = crypto.randomUUID();
     const todoId3 = crypto.randomUUID();
 
     return {
-      
       plans: [
         {
           id: planId,
-          
           title: '이번 주 건강 관리 및 운동 루틴 실천',
           period_start: today,
           period_end: today,
@@ -123,7 +135,6 @@ class SupabaseEngine {
         {
           id: todoId1,
           plan_id: planId,
-          
           title: '아침 공복 스트레칭 및 영양제 챙겨먹기',
           description: '기상 직후 전신 스트레칭 10분 진행 및 비타민 복용',
           due_date: today,
@@ -139,7 +150,6 @@ class SupabaseEngine {
         {
           id: todoId2,
           plan_id: planId,
-          
           title: '퇴근 후 헬스장에서 런닝머신 40분 뛰기',
           description: '가벼운 조깅 속도로 심폐 지구력 기르기',
           due_date: today,
@@ -155,7 +165,6 @@ class SupabaseEngine {
         {
           id: todoId3,
           plan_id: planId,
-          
           title: '주말 식단용 신선한 샐러드 및 과일 장보기',
           description: '주말 동안 먹을 건강한 식재료 구매하기',
           due_date: today,
@@ -173,11 +182,11 @@ class SupabaseEngine {
         {
           id: crypto.randomUUID(),
           todo_id: todoId1,
-          
           execution_start: new Date(Date.now() - 7200000).toISOString(),
           execution_end: new Date(Date.now() - 5400000).toISOString(),
           actual_minutes: 30,
           blocked_reason: '',
+          memo: '',
           completion_token: crypto.randomUUID(),
           created_at: new Date(Date.now() - 3600000).toISOString()
         }
@@ -200,16 +209,10 @@ class SupabaseEngine {
       todosMap.set(t.id, t);
     }
     
-    // Deduplicate do_logs strictly by todo_id to prevent double counting
-    const logsByTodo = new Map();
-    for (const l of (local.do_logs || [])) {
-      logsByTodo.set(String(l.todo_id), l);
-    }
+    // Deduplicate do_logs strictly by log primary key id
+    const logsMap = new Map((local.do_logs || []).map(l => [l.id, l]));
     for (const l of (cloud.do_logs || [])) {
-      const existing = logsByTodo.get(String(l.todo_id));
-      if (!existing || new Date(l.updated_at || l.created_at || 0) >= new Date(existing.updated_at || existing.created_at || 0)) {
-        logsByTodo.set(String(l.todo_id), l);
-      }
+      logsMap.set(l.id, l);
     }
 
     const reviewsMap = new Map((local.see_reviews || []).map(r => [r.id, r]));
@@ -218,438 +221,444 @@ class SupabaseEngine {
     }
 
     const merged = {
-      
       plans: Array.from(plansMap.values()),
       plan_histories: Array.from(historiesMap.values()),
       todos: Array.from(todosMap.values()),
-      do_logs: Array.from(logsByTodo.values()),
+      do_logs: Array.from(logsMap.values()),
       see_reviews: Array.from(reviewsMap.values())
     };
     this._saveData(merged);
     return merged;
   }
 
-  
-
   // --- QUERY & MUTATION INTERFACES (RLS & E2EE Automatic Encryption) ---
 
-  async _fetch(url, options = {}, retries = 1) {
+  async _fetch(url, options = {}, retries = 2) {
+    // Ensure cloud headers have valid Authorization token if user is authenticated
+    if (this.isCloudConfigured && (!options.headers?.Authorization || options.headers.Authorization.includes(CONFIG.SUPABASE.ANON_KEY))) {
+      const token = authClient.getAccessToken();
+      if (token) {
+        options.headers = {
+          ...(options.headers || {}),
+          'Authorization': `Bearer ${token}`,
+          'apikey': CONFIG.SUPABASE.ANON_KEY
+        };
+      }
+    }
+
     let res = await fetch(url, options);
     if (!res.ok && res.status === 401 && retries > 0) {
-      let data = {};
-      try { data = await res.clone().json(); } catch(e) {}
-      if (JSON.stringify(data).includes('JWT issued at future') || JSON.stringify(data).includes('PGRST303')) {
-        await new Promise(r => setTimeout(r, 1500));
-        return this._fetch(url, options, 0);
+      // Delay for session hydration buffer or clock skew
+      await new Promise(r => setTimeout(r, 400));
+      authClient.init();
+      const token = authClient.getAccessToken();
+      if (token) {
+        options.headers = {
+          ...(options.headers || {}),
+          'Authorization': `Bearer ${token}`,
+          'apikey': CONFIG.SUPABASE.ANON_KEY
+        };
       }
+      return this._fetch(url, options, retries - 1);
     }
     return res;
   }
 
   async fetchAll() {
-    
-
-    let rawData;
+    const local = this._loadData();
 
     if (this.isCloudConfigured) {
-      try {
-        const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
-        const headers = this._getCloudHeaders();
-        const [plansRes, historiesRes, todosRes, doLogsRes, seeRes] = await Promise.all([
-          this._fetch(`${url}/plans?select=*&order=created_at.desc`, { headers }),
-          this._fetch(`${url}/plan_histories?select=*&order=revision_number.desc`, { headers }),
-          this._fetch(`${url}/todos?select=*&order=sort_order.asc`, { headers }),
-          this._fetch(`${url}/do_logs?select=*`, { headers }),
-          this._fetch(`${url}/see_reviews?select=*&order=created_at.desc`, { headers })
-        ]);
-
-        if (plansRes.ok && todosRes.ok) {
-          const cloudData = {
-            plans: await plansRes.json(),
-            plan_histories: await historiesRes.json(),
-            todos: await todosRes.json(),
-            do_logs: await doLogsRes.json(),
-            see_reviews: await seeRes.json()
-          };
-          this._saveData(cloudData);
-          rawData = cloudData;
-        } else {
-          rawData = JSON.parse(JSON.stringify(this._loadData()));
-        }
-      } catch (err) {
-        console.warn('Supabase cloud fetch failed, falling back to local database engine:', err.message);
-        rawData = JSON.parse(JSON.stringify(this._loadData()));
+      if (typeof authClient.getSession === 'function') {
+        await authClient.getSession();
       }
-    } else {
-      rawData = JSON.parse(JSON.stringify(this._loadData()));
+      if (authClient.isAuthenticated() && authClient.getAccessToken()) {
+        try {
+          const headers = this._getCloudHeaders();
+          const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
+
+          const [plansRes, historiesRes, todosRes, doLogsRes, seeRes] = await Promise.all([
+            this._fetch(`${url}/plans?select=*`, { headers }),
+            this._fetch(`${url}/plan_histories?select=*`, { headers }),
+            this._fetch(`${url}/todos?select=*`, { headers }),
+            this._fetch(`${url}/do_logs?select=*`, { headers }),
+            this._fetch(`${url}/see_reviews?select=*`, { headers })
+          ]);
+
+          if (plansRes.status === 401 || todosRes.status === 401 || historiesRes.status === 401) {
+            const err = new Error('Session expired or unauthorized');
+            err.status = 401;
+            throw err;
+          }
+
+          const [cloudPlans, cloudHistories, cloudTodos, cloudDoLogs, cloudSee] = await Promise.all([
+            plansRes.ok ? plansRes.json() : [],
+            historiesRes.ok ? historiesRes.json() : [],
+            todosRes.ok ? todosRes.json() : [],
+            doLogsRes.ok ? doLogsRes.json() : [],
+            seeRes.ok ? seeRes.json() : []
+          ]);
+
+          // Decrypt fields from cloud
+          const decryptedPlans = await Promise.all((cloudPlans || []).map(async p => ({
+            ...p,
+            success_criteria: await decryptText(p.success_criteria)
+          })));
+
+          const decryptedHistories = await Promise.all((cloudHistories || []).map(async h => ({
+            ...h,
+            success_criteria: await decryptText(h.success_criteria),
+            revision_reason: await decryptText(h.revision_reason)
+          })));
+
+          const decryptedTodos = await Promise.all((cloudTodos || []).map(async t => ({
+            ...t,
+            description: await decryptText(t.description)
+          })));
+
+          const decryptedDoLogs = await Promise.all((cloudDoLogs || []).map(async l => ({
+            ...l,
+            blocked_reason: await decryptText(l.blocked_reason),
+            memo: await decryptText(l.memo)
+          })));
+
+          const decryptedSee = await Promise.all((cloudSee || []).map(async r => ({
+            ...r,
+            adjustment_insight: await decryptText(r.adjustment_insight)
+          })));
+
+          const cloudData = {
+            plans: decryptedPlans,
+            plan_histories: decryptedHistories,
+            todos: decryptedTodos,
+            do_logs: decryptedDoLogs,
+            see_reviews: decryptedSee
+          };
+
+          const merged = this._mergeData(local, cloudData);
+          return merged;
+        } catch (err) {
+          if (err.status === 401) throw err;
+          console.warn('Cloud fetch warning, using local PostgreSQL engine store:', err.message);
+        }
+      }
     }
 
-    // In-memory transparent decryption for the active session
-    const decryptedPlans = await Promise.all(rawData.plans.map(async (p) => ({
+    // Decrypt local store before returning
+    const decryptedLocalPlans = await Promise.all((local.plans || []).map(async p => ({
       ...p,
       success_criteria: await decryptText(p.success_criteria)
     })));
 
-    const decryptedHistories = await Promise.all(rawData.plan_histories.map(async (h) => ({
+    const decryptedLocalHistories = await Promise.all((local.plan_histories || []).map(async h => ({
       ...h,
-      success_criteria: await decryptText(h.success_criteria)
+      success_criteria: await decryptText(h.success_criteria),
+      revision_reason: await decryptText(h.revision_reason)
     })));
 
-    const decryptedTodos = await Promise.all(rawData.todos.map(async (t) => ({
+    const decryptedLocalTodos = await Promise.all((local.todos || []).map(async t => ({
       ...t,
       description: await decryptText(t.description)
     })));
 
-    const decryptedDoLogs = await Promise.all(rawData.do_logs.map(async (l) => ({
+    const decryptedLocalDoLogs = await Promise.all((local.do_logs || []).map(async l => ({
       ...l,
       blocked_reason: await decryptText(l.blocked_reason),
-        memo: await decryptText(l.memo)
+      memo: await decryptText(l.memo)
     })));
 
-    const decryptedSeeReviews = await Promise.all(rawData.see_reviews.map(async (r) => ({
+    const decryptedLocalSee = await Promise.all((local.see_reviews || []).map(async r => ({
       ...r,
       adjustment_insight: await decryptText(r.adjustment_insight)
     })));
 
     return {
-     
-      plans: decryptedPlans,
-      plan_histories: decryptedHistories,
-      todos: decryptedTodos,
-      do_logs: decryptedDoLogs,
-      see_reviews: decryptedSeeReviews
+      plans: decryptedLocalPlans,
+      plan_histories: decryptedLocalHistories,
+      todos: decryptedLocalTodos,
+      do_logs: decryptedLocalDoLogs,
+      see_reviews: decryptedLocalSee
     };
   }
 
   async createPlan(planData) {
-    
-    const cleanTitle = sanitizeText(planData.title, 255);
+    const cleanTitle = sanitizeText(planData.title);
+    if (!cleanTitle) {
+      throw new Error('계획 제목은 필수입니다.');
+    }
     const cleanCriteria = sanitizeText(planData.success_criteria);
-    const cleanHours = clampNum(planData.estimated_hours);
-    if (cleanHours <= 0) {
-      throw new Error('목표 예상 시간은 최소 1분 이상이어야 합니다.');
-    }
-
-    const signature = `plan|${cleanTitle}|${planData.period_start}|${planData.period_end}|${cleanHours}`;
-    const now = Date.now();
-    const lastTime = this.inFlightLocks.get(signature);
-    if (lastTime && (now - lastTime) < 1500) {
-      if (!this.isCloudConfigured) {
-        const data = this._loadData();
-        const existing = data.plans.find(p => p.title === cleanTitle && p.period_start === planData.period_start && p.period_end === planData.period_end);
-        if (existing) return existing;
-      }
-    }
-    this.inFlightLocks.set(signature, now);
-
-    const encryptedCriteria = await encryptText(cleanCriteria);
 
     const payload = {
       ...planData,
       title: cleanTitle,
-      estimated_hours: cleanHours,
-      success_criteria: encryptedCriteria
+      estimated_hours: clampNum(planData.estimated_hours),
+      success_criteria: cleanCriteria
     };
 
-    const data = this._loadData();
     const newPlan = {
       id: crypto.randomUUID(),
       ...payload,
-      
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    if (this.isCloudConfigured) {
+    const data = this._loadData();
+    data.plans.unshift(newPlan);
+    this._saveData(data);
+
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
-        const res = await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
+        const userId = authClient.getUserId();
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify({ ...payload, id: newPlan.id })
+          body: JSON.stringify({ ...payload, id: newPlan.id, ...(userId ? { user_id: userId } : {}) })
         });
-        if (res.ok) {
-          const created = await res.json();
-          if (created && created[0]) {
-            newPlan.id = created[0].id;
-          }
-        }
       } catch (err) {
         console.warn('Cloud createPlan sync warning:', err.message);
       }
     }
 
-    data.plans.unshift(newPlan);
-    this._saveData(data);
     return { ...newPlan, success_criteria: cleanCriteria };
   }
 
   async updatePlan(planId, updates) {
-    
-    const cleanTitle = updates.title !== undefined ? sanitizeText(updates.title, 255) : undefined;
-    const cleanCriteria = updates.success_criteria !== undefined ? sanitizeText(updates.success_criteria) : undefined;
-    const cleanHours = updates.estimated_hours !== undefined ? clampNum(updates.estimated_hours) : undefined;
-    if (cleanHours !== undefined && cleanHours <= 0) {
-      throw new Error('목표 예상 시간은 최소 1분 이상이어야 합니다.');
+    const data = this._loadData();
+    const index = data.plans.findIndex(p => String(p.id) === String(planId));
+    if (index === -1) {
+      throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
-    const encryptedCriteria = cleanCriteria !== undefined ? await encryptText(cleanCriteria) : undefined;
 
-    const payload = {
-      ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
-      ...(updates.period_start !== undefined ? { period_start: updates.period_start } : {}),
-      ...(updates.period_end !== undefined ? { period_end: updates.period_end } : {}),
-      ...(updates.priority !== undefined ? { priority: updates.priority } : {}),
-      ...(cleanHours !== undefined ? { estimated_hours: cleanHours } : {}),
-      ...(encryptedCriteria !== undefined ? { success_criteria: encryptedCriteria } : {}),
-      ...(updates.status !== undefined ? { status: updates.status } : {}),
+    const currentPlan = data.plans[index];
+    const cleanTitle = updates.title !== undefined ? sanitizeText(updates.title) : currentPlan.title;
+    const cleanCriteria = updates.success_criteria !== undefined ? sanitizeText(updates.success_criteria) : currentPlan.success_criteria;
+
+    const revisionReasonText = sanitizeText(updates.revision_reason) || '계획 정보 수정';
+
+    // Save immutable revision history
+    const historyEntry = {
+      id: crypto.randomUUID(),
+      plan_id: currentPlan.id,
+      title: currentPlan.title,
+      period_start: currentPlan.period_start,
+      period_end: currentPlan.period_end,
+      priority: currentPlan.priority,
+      estimated_hours: currentPlan.estimated_hours,
+      success_criteria: currentPlan.success_criteria,
+      revision_reason: revisionReasonText,
+      created_at: new Date().toISOString()
+    };
+    data.plan_histories.unshift(historyEntry);
+
+    const updatedPlan = {
+      ...currentPlan,
+      ...updates,
+      title: cleanTitle,
+      estimated_hours: updates.estimated_hours !== undefined ? clampNum(updates.estimated_hours) : currentPlan.estimated_hours,
+      success_criteria: cleanCriteria,
       updated_at: new Date().toISOString()
     };
+    delete updatedPlan.revision_reason;
 
-    const data = this._loadData();
-    const index = data.plans.findIndex(p => String(p.id) === String(planId) );
-    if (index === -1) {
-      throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404)');
-    }
+    data.plans[index] = updatedPlan;
+    this._saveData(data);
 
-    if (updates.estimated_hours !== undefined) {
-      const newPlanMin = parseInt(updates.estimated_hours, 10) || 0;
-      const childTodos = data.todos.filter(t => String(t.plan_id) === String(planId));
-      const totalTodoMin = childTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
-      if (totalTodoMin > 0 && newPlanMin < totalTodoMin) {
-        throw new Error(`계획 목표 시간(${newPlanMin}분)은 등록된 할 일들의 예상 시간 합계(${totalTodoMin}분)보다 작을 수 없습니다.`);
-      }
-    }
-
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
+        const userId = authClient.getUserId();
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plan_histories`, {
+          method: 'POST',
+          headers: this._getCloudHeaders(),
+          body: JSON.stringify({ ...historyEntry, ...(userId ? { user_id: userId } : {}) })
+        });
+
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify(payload)
+          body: JSON.stringify(updatedPlan)
         });
       } catch (err) {
         console.warn('Cloud updatePlan sync warning:', err.message);
       }
     }
 
-    const oldPlan = data.plans[index];
-    const revCount = data.plan_histories.filter(h => h.plan_id === planId).length;
-    data.plan_histories.unshift({
-      id: crypto.randomUUID(),
-      plan_id: oldPlan.id,
-      
-      revision_number: revCount + 1,
-      title: oldPlan.title,
-      period_start: oldPlan.period_start,
-      period_end: oldPlan.period_end,
-      priority: oldPlan.priority,
-      success_criteria: oldPlan.success_criteria,
-      estimated_hours: oldPlan.estimated_hours,
-      status: oldPlan.status,
-      reason: sanitizeText(updates.revision_reason, 500) || 'Plan updated',
-      changed_at: new Date().toISOString()
-    });
-
-    const updated = {
-      ...oldPlan,
-      ...payload,
-      
-      updated_at: new Date().toISOString()
-    };
-    delete updated.revision_reason;
-    data.plans[index] = updated;
-    this._saveData(data);
-    return { ...updated, success_criteria: cleanCriteria !== undefined ? cleanCriteria : oldPlan.success_criteria };
+    return { ...updatedPlan, success_criteria: cleanCriteria };
   }
 
   async deletePlan(planId) {
-    
-
     const data = this._loadData();
-    const planIndex = data.plans.findIndex(p => p.id === planId );
-    if (planIndex === -1) {
-      const err = new Error('계획을 찾을 수 없거나 삭제 권한이 없습니다. (PostgreSQL RLS 404/403)');
-      err.status = 403;
-      throw err;
+    const index = data.plans.findIndex(p => String(p.id) === String(planId));
+    if (index === -1) {
+      throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
 
-    if (this.isCloudConfigured) {
+    const deletedPlan = data.plans[index];
+    const sourcePlanId = deletedPlan.source_plan_id || deletedPlan.parent_plan_id;
+
+    // Cascade delete in memory
+    const childTodos = data.todos.filter(t => String(t.plan_id) === String(planId));
+    const childTodoIds = new Set(childTodos.map(t => String(t.id)));
+
+    data.plans.splice(index, 1);
+    data.plan_histories = data.plan_histories.filter(h => String(h.plan_id) !== String(planId));
+    data.todos = data.todos.filter(t => String(t.plan_id) !== String(planId));
+    data.do_logs = data.do_logs.filter(l => !childTodoIds.has(String(l.todo_id)));
+    data.see_reviews = data.see_reviews.filter(r => String(r.plan_id) !== String(planId));
+
+    // ISSUE 2 FIX: If deleted plan was linked to a source plan, check if the source plan has remaining incomplete items
+    let sourcePlanToUpdate = null;
+    if (sourcePlanId) {
+      const sourcePlan = data.plans.find(p => String(p.id) === String(sourcePlanId));
+      if (sourcePlan) {
+        // Check if other feedback improvement plans are still linked to this source plan
+        const hasOtherLinkedFeedback = data.plans.some(p => (p.source_plan_id === sourcePlan.id || p.parent_plan_id === sourcePlan.id));
+        if (!hasOtherLinkedFeedback) {
+          const sourceTodos = data.todos.filter(t => String(t.plan_id) === String(sourcePlan.id));
+          const allCompleted = sourceTodos.length > 0 && sourceTodos.every(t => t.is_completed || t.status === 'completed');
+          if (!allCompleted) {
+            // Revert status to active/in_progress and remove completed flag
+            sourcePlan.status = 'active';
+            sourcePlan.is_completed = false;
+            sourcePlanToUpdate = { ...sourcePlan };
+          }
+        }
+      }
+    }
+
+    this._saveData(data);
+
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}`, {
           method: 'DELETE',
           headers: this._getCloudHeaders()
         });
+
+        if (sourcePlanToUpdate) {
+          await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${sourcePlanToUpdate.id}`, {
+            method: 'PATCH',
+            headers: this._getCloudHeaders(),
+            body: JSON.stringify({
+              status: sourcePlanToUpdate.status,
+              is_completed: false,
+              revision_reason: 'Reverted to active state after linked feedback plan deletion'
+            })
+          }).catch(() => {});
+        }
       } catch (err) {
         console.warn('Cloud deletePlan sync warning:', err.message);
       }
     }
 
-    const childTodoIds = new Set(data.todos.filter(t => t.plan_id === planId).map(t => t.id));
-    data.plans.splice(planIndex, 1);
-    data.plan_histories = data.plan_histories.filter(h => h.plan_id !== planId);
-    data.todos = data.todos.filter(t => t.plan_id !== planId);
-    data.do_logs = data.do_logs.filter(l => !childTodoIds.has(l.todo_id));
-    data.see_reviews = data.see_reviews.filter(r => r.plan_id !== planId);
-    this._saveData(data);
     return { success: true };
   }
 
   async createTodo(todoData) {
-    
-    const cleanTitle = sanitizeText(todoData.title, 255);
+    const cleanTitle = sanitizeText(todoData.title);
+    if (!cleanTitle) {
+      throw new Error('할 일 제목은 필수입니다.');
+    }
     const cleanDesc = sanitizeText(todoData.description);
-    const cleanMin = clampNum(todoData.estimated_minutes);
-    if (cleanMin <= 0) {
-      throw new Error('할 일 예상 소요 시간은 최소 1분 이상이어야 합니다.');
-    }
-
-    const signature = `todo|${todoData.plan_id}|${cleanTitle}|${todoData.due_date}|${cleanMin}`;
-    const now = Date.now();
-    const lastTime = this.inFlightLocks.get(signature);
-    if (lastTime && (now - lastTime) < 1500) {
-      if (!this.isCloudConfigured) {
-        const data = this._loadData();
-        const existing = data.todos.find(t => t.plan_id === todoData.plan_id && t.title === cleanTitle && t.due_date === todoData.due_date);
-        if (existing) return existing;
-      }
-    }
-    this.inFlightLocks.set(signature, now);
-
-    const cleanTags = (Array.isArray(todoData.tags) ? todoData.tags : []).map(t => sanitizeText(t, 50)).filter(Boolean);
-    const encryptedDesc = await encryptText(cleanDesc);
 
     const payload = {
       ...todoData,
       title: cleanTitle,
-      description: encryptedDesc,
-      estimated_minutes: cleanMin,
-      tags: cleanTags
+      estimated_minutes: clampNum(todoData.estimated_minutes),
+      description: cleanDesc,
+      tags: Array.isArray(todoData.tags) ? todoData.tags.map(t => sanitizeText(t)).filter(Boolean) : []
     };
 
     const data = this._loadData();
-    const targetPlan = data.plans.find(p => String(p.id) === String(todoData.plan_id));
-    if (targetPlan) {
-      if (targetPlan.period_end && (todoData.due_date > targetPlan.period_end || todoData.due_date < targetPlan.period_start)) {
-        throw new Error(`할 일 마감일(${todoData.due_date})은 연결된 계획의 종료일(${targetPlan.period_end})을 초과할 수 없습니다.`);
-      }
-      if (targetPlan.estimated_hours !== undefined) {
-        const planBudgetMinutes = parseInt(targetPlan.estimated_hours, 10) || 0;
-        const newTodoMinutes = parseInt(cleanMin, 10) || 0;
-        const otherTodos = data.todos.filter(t => String(t.plan_id) === String(todoData.plan_id));
-        const currentTotalMin = otherTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
-        const newTotalMin = currentTotalMin + newTodoMinutes;
-        if (planBudgetMinutes > 0 && newTotalMin > planBudgetMinutes) {
-          throw new Error(`할 일들의 예상 시간 합계(${newTotalMin}분)가 계획의 목표 시간(${planBudgetMinutes}분)을 초과할 수 없습니다.`);
-        }
-      }
+    const parentPlan = data.plans.find(p => String(p.id) === String(todoData.plan_id));
+    if (!parentPlan) {
+      throw new Error('상위 계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
 
     const newTodo = {
       id: crypto.randomUUID(),
       ...payload,
-      
       is_completed: false,
       completed_at: null,
+      sort_order: (data.todos.filter(t => String(t.plan_id) === String(todoData.plan_id)).length) + 1,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    if (this.isCloudConfigured) {
+    data.todos.unshift(newTodo);
+    this._saveData(data);
+
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
-        const res = await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
+        const userId = authClient.getUserId();
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
+          method: 'POST',
+          headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
+          body: JSON.stringify({ ...parentPlan })
+        }).catch(() => {});
+
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify({ ...payload, id: newTodo.id, is_completed: false })
+          body: JSON.stringify({ ...payload, id: newTodo.id, ...(userId ? { user_id: userId } : {}) })
         });
-        if (res.ok) {
-          const created = await res.json();
-          if (created && created[0]) {
-            newTodo.id = created[0].id;
-          }
-        }
       } catch (err) {
         console.warn('Cloud createTodo sync warning:', err.message);
       }
     }
 
-    data.todos.push(newTodo);
-    this._saveData(data);
     return { ...newTodo, description: cleanDesc };
   }
 
   async updateTodo(todoId, updates) {
-    
-    const cleanTitle = updates.title !== undefined ? sanitizeText(updates.title, 255) : undefined;
-    const cleanDesc = updates.description !== undefined ? sanitizeText(updates.description) : undefined;
-    const cleanMin = updates.estimated_minutes !== undefined ? clampNum(updates.estimated_minutes) : undefined;
-    if (cleanMin !== undefined && cleanMin <= 0) {
-      throw new Error('할 일 예상 소요 시간은 최소 1분 이상이어야 합니다.');
+    const data = this._loadData();
+    const index = data.todos.findIndex(t => String(t.id) === String(todoId));
+    if (index === -1) {
+      throw new Error('할 일을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
-    const cleanTags = updates.tags !== undefined ? (Array.isArray(updates.tags) ? updates.tags : []).map(t => sanitizeText(t, 50)).filter(Boolean) : undefined;
-    const encryptedDesc = cleanDesc !== undefined ? await encryptText(cleanDesc) : undefined;
 
-    const payload = {
+    const currentTodo = data.todos[index];
+    const cleanTitle = updates.title !== undefined ? sanitizeText(updates.title) : currentTodo.title;
+    const cleanDesc = updates.description !== undefined ? sanitizeText(updates.description) : currentTodo.description;
+
+    const updatedTodo = {
+      ...currentTodo,
       ...updates,
-      ...(cleanTitle !== undefined ? { title: cleanTitle } : {}),
-      ...(cleanMin !== undefined ? { estimated_minutes: cleanMin } : {}),
-      ...(cleanTags !== undefined ? { tags: cleanTags } : {}),
-      ...(encryptedDesc !== undefined ? { description: encryptedDesc } : {})
+      title: cleanTitle,
+      estimated_minutes: updates.estimated_minutes !== undefined ? clampNum(updates.estimated_minutes) : currentTodo.estimated_minutes,
+      description: cleanDesc,
+      tags: updates.tags !== undefined ? (Array.isArray(updates.tags) ? updates.tags.map(t => sanitizeText(t)).filter(Boolean) : []) : currentTodo.tags,
+      updated_at: new Date().toISOString()
     };
 
-    const data = this._loadData();
-    const index = data.todos.findIndex(t => String(t.id) === String(todoId) );
-    if (index === -1) {
-      throw new Error('할 일을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404)');
-    }
-    const currentTodo = data.todos[index];
-    const planId = updates.plan_id || currentTodo.plan_id;
-    const targetPlan = data.plans.find(p => String(p.id) === String(planId));
+    data.todos[index] = updatedTodo;
+    this._saveData(data);
 
-    if (targetPlan && targetPlan.estimated_hours !== undefined) {
-      const planBudgetMinutes = parseInt(targetPlan.estimated_hours, 10) || 0;
-      const newMinutes = updates.estimated_minutes !== undefined ? (parseInt(cleanMin, 10) || 0) : (parseInt(currentTodo.estimated_minutes, 10) || 0);
-      const otherTodos = data.todos.filter(t => String(t.plan_id) === String(planId) && String(t.id) !== String(todoId));
-      const currentTotalMin = otherTodos.reduce((sum, t) => sum + (parseInt(t.estimated_minutes, 10) || 0), 0);
-      const newTotalMin = currentTotalMin + newMinutes;
-      if (planBudgetMinutes > 0 && newTotalMin > planBudgetMinutes) {
-        throw new Error(`할 일들의 예상 시간 합계(${newTotalMin}분)가 계획의 목표 시간(${planBudgetMinutes}분)을 초과할 수 없습니다.`);
-      }
-    }
-
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify(payload)
+          body: JSON.stringify(updatedTodo)
         });
       } catch (err) {
         console.warn('Cloud updateTodo sync warning:', err.message);
       }
     }
 
-    const updated = {
-      ...data.todos[index],
-      ...payload,
-      
-      updated_at: new Date().toISOString()
-    };
-    data.todos[index] = updated;
-    this._saveData(data);
-    return { ...updated, description: cleanDesc !== undefined ? cleanDesc : data.todos[index].description };
+    return { ...updatedTodo, description: cleanDesc };
   }
 
   async deleteTodo(todoId) {
-    
-
     const data = this._loadData();
-    const todoIndex = data.todos.findIndex(t => t.id === todoId );
-    if (todoIndex === -1) {
-      const err = new Error('할 일을 찾을 수 없거나 삭제 권한이 없습니다. (PostgreSQL RLS 404/403)');
-      err.status = 403;
-      throw err;
+    const index = data.todos.findIndex(t => String(t.id) === String(todoId));
+    if (index === -1) {
+      throw new Error('할 일을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
 
-    if (this.isCloudConfigured) {
+    data.todos.splice(index, 1);
+    data.do_logs = data.do_logs.filter(l => String(l.todo_id) !== String(todoId));
+    this._saveData(data);
+
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}`, {
           method: 'DELETE',
@@ -660,53 +669,49 @@ class SupabaseEngine {
       }
     }
 
-    data.todos.splice(todoIndex, 1);
-    data.do_logs = data.do_logs.filter(l => l.todo_id !== todoId);
-    this._saveData(data);
-    return { success: true };
     return { success: true };
   }
 
   async completeTodoIdempotent(todoId, logData, completionToken) {
-    
     const cleanBlocker = sanitizeText(logData.blocked_reason);
+    const cleanMemo = sanitizeText(logData.memo);
     const cleanMin = clampNum(logData.actual_minutes);
-    if (cleanMin <= 0) {
-      throw new Error('실제 소요 시간은 최소 1분 이상이어야 합니다.');
+    if (cleanMin < 0) {
+      throw new Error('실제 소요 시간은 0분 이상이어야 합니다.');
     }
     const encryptedBlocker = await encryptText(cleanBlocker);
+    const encryptedMemo = await encryptText(cleanMemo);
 
     const data = this._loadData();
-    const todo = data.todos.find(t => String(t.id) === String(todoId) );
+    const todo = data.todos.find(t => String(t.id) === String(todoId));
     if (!todo) {
       throw new Error('할 일을 찾을 수 없습니다. (PostgreSQL RLS 404)');
     }
 
-    const isDuplicateToken = data.do_logs.some(l => l.todo_id === todoId && l.completion_token === completionToken);
-    const otherLogs = data.do_logs.filter(l => String(l.todo_id) !== String(todoId));
+    const isDuplicateToken = Boolean(completionToken && data.do_logs.some(l => l.todo_id === todoId && l.completion_token === completionToken));
     const newLog = {
       id: crypto.randomUUID(),
       todo_id: todoId,
-      
       execution_start: logData.execution_start || new Date().toISOString(),
       execution_end: logData.execution_end || new Date().toISOString(),
       actual_minutes: cleanMin,
       blocked_reason: encryptedBlocker,
-        memo: encryptedMemo,
-        completion_token: completionToken,
+      memo: encryptedMemo,
+      completion_token: completionToken,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    otherLogs.push(newLog);
-    data.do_logs = otherLogs;
+    if (!isDuplicateToken) {
+      data.do_logs.push(newLog);
+    }
 
     todo.is_completed = true;
     todo.completed_at = todo.completed_at || new Date().toISOString();
     todo.updated_at = new Date().toISOString();
     this._saveData(data);
 
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         const parentPlan = data.plans.find(p => String(p.id) === String(todo.plan_id));
         if (parentPlan) {
@@ -722,108 +727,94 @@ class SupabaseEngine {
           body: JSON.stringify({ ...todo })
         }).catch(() => {});
 
-        // Direct update and log insert
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
           body: JSON.stringify({ is_completed: true, completed_at: todo.completed_at, updated_at: todo.updated_at })
         }).catch(() => {});
 
-        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?todo_id=eq.${todoId}`, {
-          method: 'DELETE',
-          headers: this._getCloudHeaders()
-        }).catch(() => {});
-
         if (!isDuplicateToken) {
+          const userId = authClient.getUserId();
           await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs`, {
             method: 'POST',
             headers: this._getCloudHeaders(),
             body: JSON.stringify({
               id: newLog.id,
-              todo_id: todoId,
-             
+              todo_id: todo.id,
+              ...(userId ? { user_id: userId } : {}),
               execution_start: newLog.execution_start,
               execution_end: newLog.execution_end,
               actual_minutes: cleanMin,
               blocked_reason: encryptedBlocker,
-              completion_token: completionToken
+              memo: encryptedMemo,
+              completion_token: newLog.completion_token
             })
-          }).catch(() => {});
+          });
         }
       } catch (err) {
         console.warn('Cloud completeTodoIdempotent sync warning:', err.message);
       }
     }
 
-    return { success: true, todo, isDuplicate: isDuplicateToken };
+    return { ...newLog, blocked_reason: cleanBlocker, memo: cleanMemo };
   }
 
-  async addDoLog(todoId, logData) {
-    
+  async addDoLog(todoIdOrLogData, maybeLogData) {
+    let todoId, logData;
+    if (typeof todoIdOrLogData === 'object' && todoIdOrLogData !== null && !maybeLogData) {
+      logData = todoIdOrLogData;
+      todoId = logData.todo_id;
+    } else {
+      todoId = todoIdOrLogData;
+      logData = maybeLogData || {};
+    }
+
     const cleanBlocker = sanitizeText(logData.blocked_reason);
+    const cleanMemo = sanitizeText(logData.memo);
     const cleanMin = clampNum(logData.actual_minutes);
-    if (cleanMin <= 0) {
-      throw new Error('실제 소요 시간은 최소 1분 이상이어야 합니다.');
+    if (cleanMin < 0) {
+      throw new Error('실제 소요 시간은 0분 이상이어야 합니다.');
     }
     const encryptedBlocker = await encryptText(cleanBlocker);
+    const encryptedMemo = await encryptText(cleanMemo);
 
     const data = this._loadData();
-    const todo = data.todos.find(t => String(t.id) === String(todoId) );
+    const todo = data.todos.find(t => String(t.id) === String(todoId));
+    if (!todo) {
+      throw new Error('할 일을 찾을 수 없습니다. (PostgreSQL RLS 404)');
+    }
 
-    // Strictly replace ANY existing logs for this todo with the single authoritative log
-    const otherLogs = data.do_logs.filter(l => String(l.todo_id) !== String(todoId));
     const newLog = {
       id: crypto.randomUUID(),
-      todo_id: todoId,
-      
+      todo_id: todo.id,
       execution_start: logData.execution_start || new Date().toISOString(),
       execution_end: logData.execution_end || new Date().toISOString(),
       actual_minutes: cleanMin,
       blocked_reason: encryptedBlocker,
-        memo: encryptedMemo,
-        completion_token: logData.completion_token || crypto.randomUUID(),
+      memo: encryptedMemo,
+      completion_token: logData.completion_token || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
 
-    otherLogs.push(newLog);
-    data.do_logs = otherLogs;
+    data.do_logs.push(newLog);
     this._saveData(data);
 
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
-        if (todo) {
-          const parentPlan = data.plans.find(p => String(p.id) === String(todo.plan_id));
-          if (parentPlan) {
-            await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
-              method: 'POST',
-              headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-              body: JSON.stringify({ ...parentPlan })
-            }).catch(() => {});
-          }
-          await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
-            method: 'POST',
-            headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify({ ...todo })
-          }).catch(() => {});
-        }
-
-        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?todo_id=eq.${todoId}`, {
-          method: 'DELETE',
-          headers: this._getCloudHeaders()
-        }).catch(() => {});
-
+        const userId = authClient.getUserId();
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
           body: JSON.stringify({
             id: newLog.id,
-            todo_id: todoId,
-           
+            todo_id: todo.id,
+            ...(userId ? { user_id: userId } : {}),
             execution_start: newLog.execution_start,
             execution_end: newLog.execution_end,
             actual_minutes: cleanMin,
             blocked_reason: encryptedBlocker,
+            memo: encryptedMemo,
             completion_token: newLog.completion_token
           })
         });
@@ -832,11 +823,106 @@ class SupabaseEngine {
       }
     }
 
-    return { ...newLog, blocked_reason: cleanBlocker };
+    return { ...newLog, blocked_reason: cleanBlocker, memo: cleanMemo };
+  }
+
+  async deleteDoLog(logId) {
+    if (!logId) {
+      throw new Error('Log ID is required');
+    }
+    const data = this._loadData();
+    const prevCount = (data.do_logs || []).length;
+    data.do_logs = (data.do_logs || []).filter(l => String(l.id) !== String(logId));
+    this._saveData(data);
+
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
+      try {
+        const headers = this._getCloudHeaders();
+        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?id=eq.${logId}`, {
+          method: 'DELETE',
+          headers
+        });
+      } catch (err) {
+        console.warn('Cloud deleteDoLog sync warning:', err.message);
+      }
+    }
+
+    return { success: true, deleted: prevCount > (data.do_logs || []).length };
+  }
+
+  async updateDoLog(logId, rawData = {}) {
+    if (!logId) {
+      throw new Error('Log ID is required');
+    }
+    const cleanMin = Math.max(0, parseInt(
+      rawData.actual_minutes !== undefined ? rawData.actual_minutes : rawData.duration_minutes,
+      10
+    ) || 0);
+    const startTime = rawData.execution_start || rawData.start_time || new Date().toISOString();
+    const endTime   = rawData.execution_end   || rawData.end_time   || new Date().toISOString();
+    const blockerRaw = rawData.blocked_reason !== undefined ? rawData.blocked_reason
+                     : (rawData.blocker_reason !== undefined ? rawData.blocker_reason : '');
+    const blockerText = sanitizeText(String(blockerRaw).trim());
+    const memoText    = rawData.memo ? sanitizeText(String(rawData.memo).trim()) : '';
+
+    const encryptedBlocker = await encryptText(blockerText);
+    const encryptedMemo    = await encryptText(memoText);
+
+    const data = this._loadData();
+    const index = (data.do_logs || []).findIndex(l => String(l.id) === String(logId));
+    if (index === -1) {
+      throw new Error('실행 기록을 찾을 수 없습니다.');
+    }
+
+    const currentLog = data.do_logs[index];
+
+    const updatedLog = {
+      ...currentLog,
+      execution_start: startTime,
+      execution_end:   endTime,
+      actual_minutes:  cleanMin,
+      blocked_reason:  encryptedBlocker,
+      memo:            encryptedMemo
+    };
+
+    data.do_logs[index] = updatedLog;
+    this._saveData(data);
+
+    if (this.isCloudConfigured && authClient.isAuthenticated() && authClient.getAccessToken()) {
+      try {
+        // Only schema-valid do_logs columns (per schema.sql):
+        // execution_start, execution_end, actual_minutes, blocked_reason, memo
+        const patchPayload = {
+          execution_start: startTime,
+          execution_end:   endTime,
+          actual_minutes:  cleanMin,
+          blocked_reason:  encryptedBlocker,
+          memo:            encryptedMemo
+        };
+        const res = await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?id=eq.${logId}`, {
+          method: 'PATCH',
+          headers: this._getCloudHeaders(),
+          body: JSON.stringify(patchPayload)
+        });
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => '');
+          console.warn(`Cloud updateDoLog PATCH failed (${res.status}):`, errBody);
+        }
+      } catch (err) {
+        console.warn('Cloud updateDoLog sync warning:', err.message);
+      }
+    }
+
+    return { ...updatedLog, blocked_reason: blockerText, memo: memoText };
+  }
+
+  getTodoActualMinutes(todoId) {
+    const data = this._loadData();
+    const logs = (data.do_logs || []).filter(l => String(l.todo_id) === String(todoId));
+    return logs.reduce((sum, l) => sum + (Number(l.actual_minutes || l.duration_minutes) || 0), 0);
   }
 
   async createSeeReview(reviewData) {
-    
     const cleanInsight = sanitizeText(reviewData.adjustment_insight);
     const encryptedInsight = await encryptText(cleanInsight);
 
@@ -851,7 +937,7 @@ class SupabaseEngine {
     };
 
     const data = this._loadData();
-    const targetPlan = data.plans.find(p => String(p.id) === String(reviewData.plan_id) );
+    const targetPlan = data.plans.find(p => String(p.id) === String(reviewData.plan_id));
     if (!targetPlan) {
       throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
@@ -859,13 +945,12 @@ class SupabaseEngine {
     const newReview = {
       id: crypto.randomUUID(),
       ...payload,
-      
       created_at: new Date().toISOString()
     };
     data.see_reviews.unshift(newReview);
     this._saveData(data);
 
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
           method: 'POST',
@@ -891,10 +976,7 @@ class SupabaseEngine {
   }
 
   async purgeAll() {
-    
-
     const cleared = {
-      
       plans: [],
       plan_histories: [],
       todos: [],
@@ -903,17 +985,27 @@ class SupabaseEngine {
     };
     this._saveData(cleared);
 
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
+        const userId = authClient.getUserId();
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = this._getCloudHeaders();
+        const filter = userId ? `?user_id=eq.${userId}` : `?id=neq.00000000-0000-0000-0000-000000000000`;
+
+        // Execute RPC purge_user_data if available
+        await this._fetch(`${url}/rpc/purge_user_data`, { method: 'POST', headers }).catch(() => {});
+
+        // 1. Delete dependent leaf records first (plan_histories, do_logs)
         await Promise.all([
-          this._fetch(`${url}/see_reviews`, { method: 'DELETE', headers }),
-          this._fetch(`${url}/do_logs`, { method: 'DELETE', headers }),
-          this._fetch(`${url}/todos`, { method: 'DELETE', headers }),
-          this._fetch(`${url}/plan_histories`, { method: 'DELETE', headers }),
-          this._fetch(`${url}/plans`, { method: 'DELETE', headers })
+          this._fetch(`${url}/plan_histories${filter}`, { method: 'DELETE', headers }).catch(() => {}),
+          this._fetch(`${url}/do_logs${filter}`, { method: 'DELETE', headers }).catch(() => {})
         ]);
+        // 2. Delete see_reviews
+        await this._fetch(`${url}/see_reviews${filter}`, { method: 'DELETE', headers }).catch(() => {});
+        // 3. Delete todos
+        await this._fetch(`${url}/todos${filter}`, { method: 'DELETE', headers }).catch(() => {});
+        // 4. Delete plans
+        await this._fetch(`${url}/plans${filter}`, { method: 'DELETE', headers }).catch(() => {});
       } catch (err) {
         console.warn('Cloud data purge sync warning:', err.message);
       }
@@ -926,7 +1018,7 @@ class SupabaseEngine {
     const seed = this._createSeedData();
     this._saveData(seed);
 
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' };
@@ -944,102 +1036,125 @@ class SupabaseEngine {
       }
     }
 
-    return { success: true };
+    return seed;
   }
 
-  async restoreBackup(validatedPayload) {
-    
-    const existing = this._loadData();
+  async exportBackup() {
+    return await this.fetchAll();
+  }
 
-    // Encrypt sensitive fields for safe at-rest storage
-    const encryptedPlans = await Promise.all((validatedPayload.plans || []).map(async p => ({
-      ...p,
-     
-      success_criteria: p.success_criteria ? await encryptText(p.success_criteria) : ''
-    })));
-    const encryptedHistories = await Promise.all((validatedPayload.plan_histories || []).map(async h => ({
-      ...h,
-     
-      success_criteria: h.success_criteria ? await encryptText(h.success_criteria) : ''
-    })));
-    const encryptedTodos = await Promise.all((validatedPayload.todos || []).map(async t => ({
-      ...t,
-     
-      description: t.description ? await encryptText(t.description) : ''
-    })));
-    const encryptedLogs = await Promise.all((validatedPayload.do_logs || []).map(async l => ({
-      ...l,
-     
-      blocked_reason: l.blocked_reason ? await encryptText(l.blocked_reason) : ''
-    })));
-    const encryptedReviews = await Promise.all((validatedPayload.see_reviews || []).map(async r => ({
-      ...r,
-     
-      adjustment_insight: r.adjustment_insight ? await encryptText(r.adjustment_insight) : ''
-    })));
-
-    const planMap = new Map(existing.plans.map(p => [p.id, p]));
-    for (const p of encryptedPlans) {
-      planMap.set(p.id, p);
+  async importBackup(jsonString, fileSize) {
+    if (fileSize && fileSize > CONFIG.MAX_IMPORT_FILE_SIZE) {
+      throw new Error(`백업 파일 크기는 최대 5MB를 초과할 수 없습니다.`);
     }
 
-    const historyMap = new Map(existing.plan_histories.map(h => [h.id, h]));
-    for (const h of encryptedHistories) {
-      historyMap.set(h.id, h);
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch (e) {
+      throw new Error('유효하지 않은 JSON 백업 파일 형식입니다.');
     }
 
-    const todoMap = new Map(existing.todos.map(t => [t.id, t]));
-    for (const t of encryptedTodos) {
-      todoMap.set(t.id, t);
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('백업 데이터 형식이 올바르지 않습니다.');
     }
 
-    // Deduplicate do_logs by todo_id
-    const logMap = new Map(existing.do_logs.map(l => [String(l.todo_id), l]));
-    for (const l of encryptedLogs) {
-      logMap.set(String(l.todo_id), l);
+    const previousBackup = this._loadData();
+
+    try {
+      const plans = Array.isArray(parsed.plans) ? parsed.plans : [];
+      const histories = Array.isArray(parsed.plan_histories) ? parsed.plan_histories : [];
+      const todos = Array.isArray(parsed.todos) ? parsed.todos : [];
+      const do_logs = Array.isArray(parsed.do_logs) ? parsed.do_logs : [];
+      const see_reviews = Array.isArray(parsed.see_reviews) ? parsed.see_reviews : [];
+
+      const newStore = {
+        plans,
+        plan_histories: histories,
+        todos,
+        do_logs,
+        see_reviews
+      };
+
+      this._saveData(newStore);
+
+      if (this.isCloudConfigured && authClient.isAuthenticated()) {
+        const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
+        const headers = { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' };
+        if (plans.length > 0) {
+          await this._fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(plans) });
+        }
+        if (todos.length > 0) {
+          await this._fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(todos) });
+        }
+        if (do_logs.length > 0) {
+          await this._fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(do_logs) });
+        }
+        if (see_reviews.length > 0) {
+          await this._fetch(`${url}/see_reviews`, { method: 'POST', headers, body: JSON.stringify(see_reviews) });
+        }
+      }
+
+      return newStore;
+    } catch (err) {
+      this._saveData(previousBackup);
+      throw new Error(`백업 복원에 실패하여 원상태로 롤백되었습니다: ${err.message}`);
+    }
+  }
+
+  async migrateLocalData() {
+    const localT06Key = 'pds_db_v2_scope_a';
+    const raw = storage.getItem(localT06Key);
+    if (!raw) return { migrated: 0 };
+
+    let parsed = {};
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      return { migrated: 0 };
     }
 
-    const reviewMap = new Map(existing.see_reviews.map(r => [r.id, r]));
-    for (const r of encryptedReviews) {
-      reviewMap.set(r.id, r);
+    const current = this._loadData();
+    const plans = Array.isArray(parsed.plans) ? parsed.plans : [];
+    const todos = Array.isArray(parsed.todos) ? parsed.todos : [];
+    const do_logs = Array.isArray(parsed.do_logs) ? parsed.do_logs : [];
+    const see_reviews = Array.isArray(parsed.see_reviews) ? parsed.see_reviews : [];
+
+    for (const p of plans) {
+      if (!current.plans.some(cp => cp.id === p.id)) current.plans.push(p);
+    }
+    for (const t of todos) {
+      if (!current.todos.some(ct => ct.id === t.id)) current.todos.push(t);
+    }
+    for (const l of do_logs) {
+      if (!current.do_logs.some(cl => cl.id === l.id)) current.do_logs.push(l);
+    }
+    for (const r of see_reviews) {
+      if (!current.see_reviews.some(cr => cr.id === r.id)) current.see_reviews.push(r);
     }
 
-    const merged = {
-     
-      plans: Array.from(planMap.values()),
-      plan_histories: Array.from(historyMap.values()),
-      todos: Array.from(todoMap.values()),
-      do_logs: Array.from(logMap.values()),
-      see_reviews: Array.from(reviewMap.values())
-    };
+    this._saveData(current);
 
-    this._saveData(merged);
-
-    if (this.isCloudConfigured) {
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' };
-        if (merged.plans.length > 0) {
-          await this._fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(merged.plans) }).catch(() => {});
+        if (current.plans.length > 0) {
+          await this._fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(current.plans) }).catch(() => {});
         }
-        if (merged.plan_histories.length > 0) {
-          await this._fetch(`${url}/plan_histories`, { method: 'POST', headers, body: JSON.stringify(merged.plan_histories) }).catch(() => {});
-        }
-        if (merged.todos.length > 0) {
-          await this._fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(merged.todos) }).catch(() => {});
-        }
-        if (merged.do_logs.length > 0) {
-          await this._fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(merged.do_logs) }).catch(() => {});
-        }
-        if (merged.see_reviews.length > 0) {
-          await this._fetch(`${url}/see_reviews`, { method: 'POST', headers, body: JSON.stringify(merged.see_reviews) }).catch(() => {});
+        if (current.todos.length > 0) {
+          await this._fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(current.todos) }).catch(() => {});
         }
       } catch (err) {
-        console.warn('Cloud restoreBackup sync warning:', err.message);
+        console.warn('Migration cloud sync warning:', err.message);
       }
     }
 
-    return { success: true, count: merged.plans.length };
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(localT06Key);
+    }
+
+    return { migrated: plans.length + todos.length };
   }
 }
 

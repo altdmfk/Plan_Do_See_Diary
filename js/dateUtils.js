@@ -167,8 +167,8 @@ export function getKSTMonthRange(dateInput = new Date()) {
  * Calculate if a To Do is delayed strictly against KST today
  * Completed To Dos are never delayed.
  */
-export function isDelayedKST(dueDate, isCompleted) {
-  if (isCompleted) return false;
+export function isDelayedKST(dueDate, isCompleted, status = null) {
+  if (isCompleted || status === 'completed') return false;
   if (!dueDate) return false;
   const today = getKSTToday();
   return dueDate < today;
