@@ -211,39 +211,23 @@ class StateStore {
   getKSTMetrics(planId = this.state.selectedPlanId) {
     const plans = this.state.plans || [];
     const todos = this.state.todos || [];
-    const activeTodos = todos.filter(t => !planId || String(t.plan_id) === String(planId));
-    const relevantPlans = planId ? plans.filter(p => String(p.id) === String(planId)) : plans;
+    const activePlans = plans.filter(p => !p.archived && !p.is_deleted);
+    const relevantPlans = planId ? activePlans.filter(p => String(p.id) === String(planId)) : activePlans;
+    const activeTodos = todos.filter(t => !t.is_deleted && (!planId || String(t.plan_id) === String(planId)));
     
-    // Incomplete Do items (uncompleted tasks)
-    // Condition: item.is_completed === false AND item.status !== 'completed'
-    const incompleteDoItems = activeTodos.filter(t => !t.is_completed && t.status !== 'completed');
+    // 1. 계획 건수 (Plan Count):
+    // Definition: The total number of all currently incomplete ToDo items (!is_completed).
+    const plannedCount = activeTodos.filter(t => !t.is_completed).length;
 
-    // Edge case: Plans with no Do record yet are treated as incomplete items
-    const plansWithoutTodos = relevantPlans.filter(p => {
-      if (p.status === 'completed' || p.is_completed === true) return false;
-      const pTodos = todos.filter(t => String(t.plan_id) === String(p.id));
-      return pTodos.length === 0;
-    });
+    // 2. 완료 건수
+    const completedCount = activeTodos.filter(t => t.is_completed).length;
 
-    const plannedCount = incompleteDoItems.length + (planId ? (activeTodos.length === 0 && relevantPlans.length > 0 && relevantPlans[0].status !== 'completed' ? 1 : 0) : plansWithoutTodos.length);
-
-    const completedCount = activeTodos.filter(t => t.is_completed || t.status === 'completed').length;
     const doLogs = this.state.do_logs || [];
 
-    // T06-C30: If a plan/task is completed, it must strictly be counted as COMPLETED and NEVER as delayed/overdue
-    const delayedTodoIds = new Set();
+    // 3. 지연 수 (Overdue Count, Strict T06-C30 Compliance):
+    // Definition: Unique ToDo items that are NOT completed AND whose deadline is strictly before KST today.
     const today = getKSTToday();
-    for (const todo of activeTodos) {
-      if (todo.is_completed || todo.status === 'completed') continue; // Completed tasks are NEVER delayed
-      const isDateDelayed = isDelayedKST(todo.due_date, todo.is_completed, todo.status);
-      const todoLogs = doLogs.filter(l => String(l.todo_id) === String(todo.id));
-      const actualMin = todoLogs.reduce((sum, l) => sum + (Number(l.actual_minutes) || 0), 0);
-      const isTimeOverrun = actualMin > (parseInt(todo.estimated_minutes, 10) || 0);
-      if (isDateDelayed || isTimeOverrun) {
-        delayedTodoIds.add(todo.id);
-      }
-    }
-    const delayedCount = delayedTodoIds.size;
+    const delayedCount = activeTodos.filter(t => !t.is_completed && t.due_date < today).length;
 
     const blockedTodoIds = new Set();
     for (const log of doLogs) {

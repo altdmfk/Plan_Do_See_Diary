@@ -165,6 +165,7 @@ function bindAuthForms() {
   const authPassword = document.getElementById('authPassword');
   const authErrorMsg = document.getElementById('authErrorMsg');
   const authForm = document.getElementById('authForm');
+  const rememberEmailChk = document.getElementById('remember-email') || document.getElementById('rememberEmailChk');
   let isSubmittingAuth = false;
 
   // Restore saved email on page load
@@ -1112,10 +1113,11 @@ function bindModalForms() {
         return;
       }
 
-      const revisionReason = document.getElementById('planRevisionReasonInput').value.trim();
+      const revisionReasonInput = document.getElementById('planRevisionReasonInput') || document.querySelector('#edit-plan-reason');
+      const revisionReason = revisionReasonInput ? revisionReasonInput.value.trim() : '';
       if (revisionReason.length > 255) {
         showToast(i18n.t('textTooLong').replace('{max}', 255), 'error');
-        document.getElementById('planRevisionReasonInput').focus();
+        if (revisionReasonInput) revisionReasonInput.focus();
         unlock();
         return;
       }
@@ -1131,13 +1133,12 @@ function bindModalForms() {
       );
 
       if (!isContentChanged) {
-        showToast(i18n.t('noChangesMade'), 'warning');
-        modalManager.forceClose('planModal');
+        showToast(i18n.getLang() === 'ko' ? '수정된 내용이 없습니다.' : (i18n.t('noChangesMade') || '수정된 내용이 없습니다.'), 'warning');
         unlock();
         return;
       }
 
-      payload.revision_reason = revisionReason || (i18n.getLang() === 'ko' ? '계획 정보 수정' : 'Plan updated');
+      payload.revision_reason = revisionReason || 'Revision before update';
     }
 
     try {
@@ -1836,7 +1837,8 @@ function openExecLoggerModal(todoId, logId = null) {
 
   timerState.baseMinutes = 0;
 
-  const targetLog = logId ? (appState.getState().do_logs || []).find(l => String(l.id) === String(logId)) : null;
+  // Strict lookup for targetLog: explicitly find by logId, NEVER fallback to logs[0] or logs[logs.length - 1]
+  const targetLog = logId ? logs.find(log => String(log.id) === String(logId)) : null;
   const saveOnlyBtn = document.getElementById('execSaveLogOnlyBtn');
   const submitBtn = document.getElementById('execCompleteAndLogBtn');
   const timerSection = document.getElementById('execTimerSection');
@@ -1852,9 +1854,11 @@ function openExecLoggerModal(todoId, logId = null) {
     document.getElementById('execStartInput').value = toLocalInput(sDate);
     document.getElementById('execEndInput').value = toLocalInput(eDate);
     document.getElementById('execMinutesInput').value = targetLog.actual_minutes || 0;
-    document.getElementById('execBlockerInput').value = targetLog.blocked_reason || '';
+    const cleanBlocker = targetLog.blocked_reason && !targetLog.blocked_reason.startsWith('enc:v1:') ? targetLog.blocked_reason : '';
+    const cleanMemo = targetLog.memo && !targetLog.memo.startsWith('enc:v1:') ? targetLog.memo : '';
+    document.getElementById('execBlockerInput').value = cleanBlocker;
     const memoInput = document.getElementById('execMemoInput');
-    if (memoInput) memoInput.value = targetLog.memo || '';
+    if (memoInput) memoInput.value = cleanMemo;
   } else {
     document.getElementById('execModalTitle').textContent = i18n.getLang() === 'ko' ? 'Do 실행 기록' : 'Log Execution Time';
     if (saveOnlyBtn) saveOnlyBtn.style.display = '';

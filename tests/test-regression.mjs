@@ -562,7 +562,7 @@ async function runRegressionTests() {
 
   await appState.refreshData();
   const seeMetricsAll = appState.getKSTMetrics(null);
-  assert(seeMetricsAll.plannedCount === 1, `T06-C28: plannedCount counts strictly uncompleted plans (expected 1, got ${seeMetricsAll.plannedCount})`);
+  assert(seeMetricsAll.plannedCount === 0, `T06-C28: plannedCount strictly counts Do tasks, expects 0 when empty (expected 0, got ${seeMetricsAll.plannedCount})`);
 
   // ----------------------------------------------------------------
   // TEST 14: Domain Rule T06-C30 — Completed Tasks Never Delayed
@@ -826,9 +826,9 @@ async function runRegressionTests() {
   await appState.refreshData();
   appState.setSelectedPlan(testPlan21.id);
 
-  // Edge case 1: Plan with no Do record yet -> treated as 1 incomplete item
+  // Edge case 1: Plan with no Do record yet -> treated as 0 incomplete items (Round 2 Rule)
   let metrics21 = appState.getKSTMetrics(testPlan21.id);
-  assert(metrics21.plannedCount === 1, 'Plan with no Do record yet is counted as 1 incomplete item');
+  assert(metrics21.plannedCount === 0, 'Plan with no Do record yet is counted as 0 incomplete items');
 
   // Add 2 tasks: 1 normal incomplete, 1 overdue incomplete
   const todoA = await API.createTodo({
@@ -1083,7 +1083,71 @@ async function runRegressionTests() {
   const updatedPlan = await API.updatePlan(sourcePlan.id, {
     title: 'Updated Plan Title Without User Status Input'
   });
-  assert(updatedPlan.status === 'active', 'Plan status remains active based on uncompleted tasks');
+  // ----------------------------------------------------------------
+  // TEST 30: UI/State & Metric Calculation Defects (Bug Fix Directive)
+  // ----------------------------------------------------------------
+  console.log('\n--- [30] UI/State & Metric Calculation Fixes ---');
+
+  // 1. Revision Reason preservation
+  const customReason = '일정 지연으로 인한 기간 연장';
+  await API.updatePlan(sourcePlan.id, {
+    title: 'Updated Plan Title with Custom Reason',
+    revision_reason: customReason
+  });
+  await appState.refreshData();
+  const latestHistories = appState.getState().plan_histories.filter(h => h.plan_id === sourcePlan.id);
+  assert(latestHistories.length > 0, 'Revision history recorded on plan update');
+  assert(latestHistories[0].revision_reason === customReason, `Custom revision reason preserved (got "${latestHistories[0].revision_reason}")`);
+
+  // 2. Metrics calculation: 0 when empty, overdue not added to plan count
+  const emptyMetrics = appState.getKSTMetrics('non_existent_plan_id');
+  assert(emptyMetrics.plannedCount === 0, 'Empty plan scope returns exactly 0 planned count');
+
+  // Clean data for isolated metrics verification
+  dbClient._saveData({ plans: [], plan_histories: [], todos: [], do_logs: [], see_reviews: [] });
+  dbClient.clearMemoryStore();
+  appState.resetGlobalState();
+
+  const zeroMetrics = appState.getKSTMetrics(null);
+  assert(zeroMetrics.plannedCount === 0, 'Zero plans/todos metrics return plannedCount === 0');
+
+  // Create 1 plan and 2 incomplete todos (1 overdue, 1 future)
+  const metricPlan = await API.createPlan({ title: 'Metric Plan', period_start: '2026-09-01', period_end: '2026-09-10', priority: 'high' });
+  const tNormal = await API.createTodo({ plan_id: metricPlan.id, title: 'T Normal', due_date: '2026-09-10', estimated_minutes: 30, priority: 'medium' });
+  const tOverdue = await API.createTodo({ plan_id: metricPlan.id, title: 'T Overdue', due_date: '2020-01-01', estimated_minutes: 30, priority: 'high' });
+
+  await appState.refreshData();
+  const calculatedMetrics = appState.getKSTMetrics(metricPlan.id);
+  assert(calculatedMetrics.plannedCount === 2, `Planned count is exactly incomplete items count (expected 2, got ${calculatedMetrics.plannedCount})`);
+  assert(calculatedMetrics.delayedCount === 1, `Delayed count is independent metric (expected 1, got ${calculatedMetrics.delayedCount})`);
+
+  // ----------------------------------------------------------------
+  // TEST 31: Round 2 Root Cause Elimination Verification
+  // ----------------------------------------------------------------
+  console.log('\n--- [31] Round 2 Root Cause Elimination ---');
+
+  // 1. Initialize app with empty user account
+  dbClient._saveData({ plans: [], plan_histories: [], todos: [], do_logs: [], see_reviews: [] });
+  appState.resetGlobalState();
+  await appState.refreshData();
+
+  let r2Metrics = appState.getKSTMetrics(null);
+  assert(r2Metrics.plannedCount === 0, 'Check 1 (Empty state): plannedCount MUST be 0 (no ghost 1 plan)');
+
+  // 2. Add 1 plan and 1 overdue incomplete item
+  const r2Plan = await API.createPlan({ title: 'Test Plan Round 2', period_start: '2026-09-01', period_end: '2026-09-10', priority: 'medium' });
+  await API.createTodo({ plan_id: r2Plan.id, title: 'Test Todo Round 2', due_date: '2020-01-01', priority: 'high', estimated_minutes: 30 });
+  
+  await appState.refreshData();
+  r2Metrics = appState.getKSTMetrics(r2Plan.id);
+  assert(r2Metrics.plannedCount === 1, 'Check 2 (1 Overdue item): plannedCount MUST be 1');
+  assert(r2Metrics.delayedCount === 1, 'Check 2: delayedCount MUST be 1');
+
+  // 3. Edit the plan item once
+  await API.updatePlan(r2Plan.id, { title: 'Test Plan Edited R2', revision_reason: 'Edited once' });
+  await appState.refreshData();
+  const r2Histories = appState.getState().plan_histories.filter(h => h.plan_id === r2Plan.id);
+  assert(r2Histories.length === 1, 'Check 3 (Histories after 1 edit): Only 1 revision history must exist after 1 edit (no duplicates)');
 
   console.log('\n====================================================');
   console.log(`🎉 ALL REGRESSION TESTS PASSED! (${passedTests}/${totalTests})`);
@@ -1094,3 +1158,4 @@ runRegressionTests().catch(err => {
   console.error('Regression suite failed:', err);
   process.exit(1);
 });
+

@@ -146,39 +146,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- 9. Trigger Function: Snapshot Plan History on Update
-CREATE OR REPLACE FUNCTION fn_capture_plan_history()
-RETURNS TRIGGER AS $$
-DECLARE
-    next_rev INT;
-BEGIN
-    SELECT COALESCE(MAX(revision_number), 0) + 1 INTO next_rev
-    FROM plan_histories
-    WHERE plan_id = OLD.id;
-
-    INSERT INTO plan_histories (
-        user_id, plan_id, revision_number, title,
-        period_start, period_end, priority,
-        success_criteria, estimated_hours, status,
-        reason, changed_at
-    ) VALUES (
-        OLD.user_id, OLD.id, next_rev, OLD.title,
-        OLD.period_start, OLD.period_end, OLD.priority,
-        OLD.success_criteria, OLD.estimated_hours, OLD.status,
-        'Revision before update', now() AT TIME ZONE 'utc'
-    );
-
-    NEW.updated_at = now() AT TIME ZONE 'utc';
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
+-- 9. Trigger Function: Snapshot Plan History on Update (DEPRECATED - Moved to Client Service to capture custom reasons)
 DROP TRIGGER IF EXISTS trg_capture_plan_history ON plans;
-CREATE TRIGGER trg_capture_plan_history
-    BEFORE UPDATE ON plans
-    FOR EACH ROW
-    WHEN (OLD.* IS DISTINCT FROM NEW.*)
-    EXECUTE FUNCTION fn_capture_plan_history();
+DROP FUNCTION IF EXISTS fn_capture_plan_history();
 
 -- 10. Row Level Security (RLS) Configuration & Public API Grants
 -- Explicitly revoke access from anon to enforce HTTP 403/404 for unauthenticated requests

@@ -202,6 +202,10 @@ class SupabaseEngine {
     }
     const historiesMap = new Map((local.plan_histories || []).map(h => [h.id, h]));
     for (const h of (cloud.plan_histories || [])) {
+      // Actively eliminate DB trigger-generated duplicate snapshots
+      if (h.reason === 'Revision before update' || h.revision_reason === 'Revision before update') {
+        continue;
+      }
       historiesMap.set(h.id, h);
     }
     const todosMap = new Map((local.todos || []).map(t => [t.id, t]));
@@ -307,7 +311,8 @@ class SupabaseEngine {
           const decryptedHistories = await Promise.all((cloudHistories || []).map(async h => ({
             ...h,
             success_criteria: await decryptText(h.success_criteria),
-            revision_reason: await decryptText(h.revision_reason)
+            revision_reason: await decryptText(h.reason || h.revision_reason),
+            reason: await decryptText(h.reason || h.revision_reason)
           })));
 
           const decryptedTodos = await Promise.all((cloudTodos || []).map(async t => ({
@@ -445,7 +450,9 @@ class SupabaseEngine {
       estimated_hours: currentPlan.estimated_hours,
       success_criteria: currentPlan.success_criteria,
       revision_reason: revisionReasonText,
-      created_at: new Date().toISOString()
+      reason: revisionReasonText, // explicitly match DB schema column
+      created_at: new Date().toISOString(),
+      changed_at: new Date().toISOString()
     };
     data.plan_histories.unshift(historyEntry);
 

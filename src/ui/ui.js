@@ -752,7 +752,9 @@ export function renderDoColumn(todos, doLogs, selectedPlan, activeTags = []) {
               ${todoLogs.map(l => {
                 const startFormatted = l.execution_start ? formatLocalizedDateTime(l.execution_start, i18n.getLang()) : '-';
                 const endFormatted = l.execution_end ? formatLocalizedDateTime(l.execution_end, i18n.getLang()) : '-';
-                const memoText = l.memo && l.memo.trim().length > 0 ? escapeHtml(l.memo) : i18n.t('noMemo');
+                const rawMemo = l.memo && !l.memo.startsWith('enc:v1:') ? l.memo.trim() : '';
+                const memoText = rawMemo.length > 0 ? escapeHtml(rawMemo) : i18n.t('noMemo');
+                const rawBlocker = l.blocked_reason && !l.blocked_reason.startsWith('enc:v1:') ? l.blocked_reason.trim() : '';
                 return `
                   <div class="todo-log-item" data-log-id="${l.id}" data-todo-id="${todo.id}" title="${i18n.getLang() === 'ko' ? '더블클릭하여 수정' : 'Double-click to edit'}" style="padding: 0.25rem 0; border-top: 1px dashed var(--color-border); cursor: pointer;">
                     <div style="display: flex; justify-content: space-between; align-items: center; color: var(--color-text-muted); font-size: 0.73rem;">
@@ -765,7 +767,7 @@ export function renderDoColumn(todos, doLogs, selectedPlan, activeTags = []) {
                       </div>
                     </div>
                     <div style="margin-top: 0.15rem; color: var(--color-text-main); word-break: break-word;">📝 ${memoText}</div>
-                    ${l.blocked_reason ? `<div style="margin-top: 0.15rem; color: var(--color-danger); word-break: break-word;">⚠️ ${escapeHtml(l.blocked_reason)}</div>` : ''}
+                    ${rawBlocker ? `<div style="margin-top: 0.15rem; color: var(--color-danger); word-break: break-word;">⚠️ ${escapeHtml(rawBlocker)}</div>` : ''}
                   </div>
                 `;
               }).join('')}
@@ -865,6 +867,7 @@ export function renderSeeColumn(metrics, selectedPlan, seeReviews) {
         </div>
         ${seeReviews.map(r => {
           const timestampFormatted = formatLocalizedDateTime(r.created_at || r.review_date, i18n.getLang()) || r.review_date;
+          const cleanInsight = r.adjustment_insight && !r.adjustment_insight.startsWith('enc:v1:') ? r.adjustment_insight : '';
           return `
           <div class="card" style="margin-bottom: 0.5rem; font-size: 0.8rem;">
             <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--color-text-muted);">
@@ -872,7 +875,7 @@ export function renderSeeColumn(metrics, selectedPlan, seeReviews) {
               <span>✓ ${r.completed_count}/${r.planned_count}</span>
             </div>
             <div style="margin-top: 0.25rem; font-weight: 500;">
-              ${escapeHtml(r.adjustment_insight)}
+              ${escapeHtml(cleanInsight)}
             </div>
           </div>
         `;}).join('')}
@@ -883,15 +886,27 @@ export function renderSeeColumn(metrics, selectedPlan, seeReviews) {
   container.innerHTML = html;
 }
 
-export function renderPlanHistoryModal(plan, histories) {
+export function renderPlanHistoryModal(plan, histories = []) {
   if (typeof document === 'undefined') return;
   const titleEl = document.getElementById('historyModalPlanTitle');
   const listEl = document.getElementById('historyModalList');
   if (titleEl) titleEl.textContent = plan ? `${i18n.t('historyModalTitle')}: ${plan.title}` : i18n.t('historyModalTitle');
   
   if (!listEl) return;
+  listEl.innerHTML = '';
 
-  if (histories.length === 0) {
+  // 1. Deduplicate revision entries by unique id/key
+  const seen = new Set();
+  const uniqueHistories = [];
+  for (const h of (histories || [])) {
+    const key = h.id || `${h.plan_id}_${h.created_at || h.changed_at}_${h.title}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueHistories.push(h);
+    }
+  }
+
+  if (uniqueHistories.length === 0) {
     listEl.innerHTML = `
       <div style="text-align: center; color: var(--color-text-muted); padding: 1.5rem;">
         ${i18n.t('noHistoryText')}
@@ -900,20 +915,39 @@ export function renderPlanHistoryModal(plan, histories) {
     return;
   }
 
-  listEl.innerHTML = histories.map(h => `
+  // 2. Sort chronologically ascending to assign sequential revision numbers (#1, #2, ...)
+  const sorted = [...uniqueHistories].sort((a, b) => {
+    const dateA = new Date(a.created_at || a.changed_at || 0).getTime();
+    const dateB = new Date(b.created_at || b.changed_at || 0).getTime();
+    return dateA - dateB;
+  });
+
+  const numbered = sorted.map((h, idx) => ({
+    ...h,
+    seqRevisionNo: h.revision_no ?? h.revision_number ?? (idx + 1)
+  }));
+
+  // 3. Render newest revisions first with strictly distinct, sequential numbers
+  const displayList = [...numbered].reverse();
+
+  listEl.innerHTML = displayList.map(h => {
+    const revNo = h.seqRevisionNo;
+    const reasonText = h.revision_reason ?? h.reason ?? '';
+    const dateFormatted = formatLocalizedDateTime(h.changed_at || h.created_at, i18n.getLang()) || '-';
+    return `
     <div class="history-item">
       <div style="display: flex; justify-content: space-between; font-weight: 600; font-size: 0.85rem;">
-        <span>${i18n.t('revisionNumberLabel')}${h.revision_number}</span>
-        <span style="font-size: 0.75rem; color: var(--color-text-muted);">${formatLocalizedDateTime(h.changed_at, i18n.getLang())} (${i18n.t('tzLabel')})</span>
+        <span>${i18n.t('revisionNumberLabel')}${revNo}</span>
+        <span style="font-size: 0.75rem; color: var(--color-text-muted);">${dateFormatted} (${i18n.t('tzLabel')})</span>
       </div>
       <div style="margin-top: 0.35rem; font-size: 0.85rem;"><strong>Title:</strong> ${escapeHtml(h.title)}</div>
       <div style="font-size: 0.78rem; color: var(--color-text-muted); margin-top: 0.2rem;">
         ${escapeHtml(h.period_start)} ~ ${escapeHtml(h.period_end)} | ${escapeHtml(h.estimated_hours)}${i18n.t('minutesUnit')} | ${getPriorityBadge(h.priority)}
       </div>
       ${h.success_criteria ? `<div style="font-size: 0.78rem; margin-top: 0.2rem;">${i18n.t('targetLabel')} ${escapeHtml(h.success_criteria)}</div>` : ''}
-      <div style="font-size: 0.75rem; color: var(--color-primary); margin-top: 0.25rem;">Reason: ${escapeHtml(h.reason)}</div>
+      <div style="font-size: 0.75rem; color: var(--color-primary); margin-top: 0.25rem;">Reason: ${escapeHtml(reasonText)}</div>
     </div>
-  `).join('');
+  `;}).join('');
 }
 
 /**

@@ -214,7 +214,7 @@ export const I18N = {
     backupImported: '백업 데이터가 성공적으로 복원되었습니다 (중복 행 0건).',
     resetSuccess: '데이터가 0건으로 초기화되었습니다.',
     selectPlanFirst: '먼저 계획을 선택해 주세요.',
-    noChangesMade: '변경된 계획 내용이 없습니다.',
+    noChangesMade: '수정된 내용이 없습니다.',
     tagFilterActive: '태그 필터',
     actionDuplicate: '이미 처리된 요청입니다.',
     fileReadFailed: '파일을 읽는데 실패했습니다.',

@@ -221,8 +221,8 @@ export async function decryptText(armoredOrPlainText) {
 
     return new TextDecoder().decode(decryptedBuffer);
   } catch (err) {
-    // Fallback on key change/mismatch
-    return str;
+    // Fallback on key change/mismatch: return empty string instead of raw unreadable cipher text
+    return '';
   }
 }
 
