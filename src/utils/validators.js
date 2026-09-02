@@ -139,6 +139,26 @@ export function migrateLegacySchema(rawPayload) {
       }
     }
 
+    const rawHistories = Array.isArray(payload.plan_histories) ? payload.plan_histories : [];
+    for (const h of rawHistories) {
+      if (h && typeof h === 'object') {
+        migrated.plan_histories.push({
+          id: h.id || crypto.randomUUID(),
+          plan_id: h.plan_id || (migrated.plans[0]?.id || crypto.randomUUID()),
+          revision_number: clampNumber(h.revision_number || 1),
+          title: sanitizeString(h.title || 'Migrated Revision', MAX_TITLE_LEN),
+          period_start: h.period_start || '2026-01-01',
+          period_end: h.period_end || '2026-01-07',
+          priority: h.priority || 'medium',
+          success_criteria: sanitizeString(h.success_criteria || ''),
+          estimated_hours: clampNumber(h.estimated_hours || 0),
+          status: h.status || 'active',
+          reason: sanitizeString(h.reason || h.revision_reason || 'Initial plan setup', 500),
+          changed_at: h.changed_at || h.created_at || new Date().toISOString()
+        });
+      }
+    }
+
     const rawLogs = Array.isArray(payload.do_logs) ? payload.do_logs : (Array.isArray(payload.executions) ? payload.executions : []);
     for (const l of rawLogs) {
       if (l && typeof l === 'object') {
@@ -149,8 +169,28 @@ export function migrateLegacySchema(rawPayload) {
           execution_end: l.execution_end || l.end_time || new Date().toISOString(),
           actual_minutes: clampNumber(l.actual_minutes || l.duration_minutes || 0),
           blocked_reason: sanitizeString(l.blocked_reason || l.blocker || l.block_reason || ''),
+          memo: sanitizeString(l.memo || ''),
           completion_token: l.completion_token || crypto.randomUUID(),
           created_at: l.created_at || new Date().toISOString()
+        });
+      }
+    }
+
+    const rawReviews = Array.isArray(payload.see_reviews) ? payload.see_reviews : [];
+    for (const r of rawReviews) {
+      if (r && typeof r === 'object') {
+        migrated.see_reviews.push({
+          id: r.id || crypto.randomUUID(),
+          plan_id: r.plan_id || (migrated.plans[0]?.id || crypto.randomUUID()),
+          review_date: r.review_date || '2026-01-07',
+          planned_count: clampNumber(r.planned_count || 0),
+          completed_count: clampNumber(r.completed_count || 0),
+          delayed_count: clampNumber(r.delayed_count || 0),
+          blocked_count: clampNumber(r.blocked_count || 0),
+          time_delta_minutes: clampNumber(r.time_delta_minutes || 0),
+          adjustment_insight: sanitizeString(r.adjustment_insight || ''),
+          feedback_applied: Boolean(r.feedback_applied),
+          created_at: r.created_at || new Date().toISOString()
         });
       }
     }

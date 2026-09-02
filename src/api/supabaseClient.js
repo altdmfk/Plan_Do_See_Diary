@@ -202,10 +202,6 @@ class SupabaseEngine {
     }
     const historiesMap = new Map((local.plan_histories || []).map(h => [h.id, h]));
     for (const h of (cloud.plan_histories || [])) {
-      // Actively eliminate DB trigger-generated duplicate snapshots
-      if (h.reason === 'Revision before update' || h.revision_reason === 'Revision before update') {
-        continue;
-      }
       historiesMap.set(h.id, h);
     }
     const todosMap = new Map((local.todos || []).map(t => [t.id, t]));
@@ -440,15 +436,19 @@ class SupabaseEngine {
     const revisionReasonText = sanitizeText(updates.revision_reason) || '계획 정보 수정';
 
     // Save immutable revision history
+    const existingHistories = data.plan_histories.filter(h => String(h.plan_id) === String(currentPlan.id));
+    const nextRevisionNumber = existingHistories.length + 1;
     const historyEntry = {
       id: crypto.randomUUID(),
       plan_id: currentPlan.id,
+      revision_number: nextRevisionNumber,
       title: currentPlan.title,
       period_start: currentPlan.period_start,
       period_end: currentPlan.period_end,
       priority: currentPlan.priority,
       estimated_hours: currentPlan.estimated_hours,
       success_criteria: currentPlan.success_criteria,
+      status: currentPlan.status || 'active',
       revision_reason: revisionReasonText,
       reason: revisionReasonText, // explicitly match DB schema column
       created_at: new Date().toISOString(),
@@ -472,10 +472,26 @@ class SupabaseEngine {
     if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         const userId = authClient.getUserId();
+        const cloudHistoryPayload = {
+          id: historyEntry.id,
+          plan_id: historyEntry.plan_id,
+          revision_number: historyEntry.revision_number,
+          title: historyEntry.title,
+          period_start: historyEntry.period_start,
+          period_end: historyEntry.period_end,
+          priority: historyEntry.priority,
+          estimated_hours: historyEntry.estimated_hours,
+          success_criteria: historyEntry.success_criteria,
+          status: historyEntry.status,
+          reason: historyEntry.reason,
+          changed_at: historyEntry.changed_at,
+          ...(userId ? { user_id: userId } : {})
+        };
+
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plan_histories`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify({ ...historyEntry, ...(userId ? { user_id: userId } : {}) })
+          body: JSON.stringify(cloudHistoryPayload)
         });
 
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}`, {
@@ -1046,20 +1062,26 @@ class SupabaseEngine {
     return await this.fetchAll();
   }
 
-  async importBackup(jsonString, fileSize) {
-    if (fileSize && fileSize > CONFIG.MAX_IMPORT_FILE_SIZE) {
-      throw new Error(`백업 파일 크기는 최대 5MB를 초과할 수 없습니다.`);
+  async restoreBackup(backupData, options = {}) {
+    let parsed = backupData;
+    if (typeof backupData === 'string') {
+      try {
+        parsed = JSON.parse(backupData);
+      } catch (e) {
+        throw new Error('올바른 백업 파일 형식이 아닙니다.');
+      }
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonString);
-    } catch (e) {
-      throw new Error('유효하지 않은 JSON 백업 파일 형식입니다.');
+    if (!parsed || typeof parsed !== 'object' || !parsed.plans) {
+      throw new Error('올바른 백업 파일 형식이 아닙니다.');
     }
 
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('백업 데이터 형식이 올바르지 않습니다.');
+    let currentUserId = null;
+    if (this.isCloudConfigured && authClient.isAuthenticated()) {
+      currentUserId = authClient.getUserId();
+      if (!currentUserId) {
+        throw new Error('인증된 사용자 정보를 찾을 수 없습니다.');
+      }
     }
 
     const previousBackup = this._loadData();
@@ -1071,38 +1093,62 @@ class SupabaseEngine {
       const do_logs = Array.isArray(parsed.do_logs) ? parsed.do_logs : [];
       const see_reviews = Array.isArray(parsed.see_reviews) ? parsed.see_reviews : [];
 
+      // Replace user_id in all items with currentUserId to prevent RLS violation
+      const plansToInsert = plans.map(p => ({ ...p, ...(currentUserId ? { user_id: currentUserId } : {}) }));
+      const historiesToInsert = histories.map(h => ({ ...h, ...(currentUserId ? { user_id: currentUserId } : {}) }));
+      const todosToInsert = todos.map(t => ({ ...t, ...(currentUserId ? { user_id: currentUserId } : {}) }));
+      const logsToInsert = do_logs.map(l => ({ ...l, ...(currentUserId ? { user_id: currentUserId } : {}) }));
+      const reviewsToInsert = see_reviews.map(r => ({ ...r, ...(currentUserId ? { user_id: currentUserId } : {}) }));
+
       const newStore = {
-        plans,
-        plan_histories: histories,
-        todos,
-        do_logs,
-        see_reviews
+        plans: plansToInsert,
+        plan_histories: historiesToInsert,
+        todos: todosToInsert,
+        do_logs: logsToInsert,
+        see_reviews: reviewsToInsert
       };
 
       this._saveData(newStore);
 
+      // Sequential Upsert/Insert respecting Foreign Key Constraints
       if (this.isCloudConfigured && authClient.isAuthenticated()) {
         const url = `${CONFIG.SUPABASE.URL}/rest/v1`;
         const headers = { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' };
-        if (plans.length > 0) {
-          await this._fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(plans) });
+
+        // A. Restore Plans
+        if (plansToInsert.length > 0) {
+          await this._fetch(`${url}/plans`, { method: 'POST', headers, body: JSON.stringify(plansToInsert) });
         }
-        if (todos.length > 0) {
-          await this._fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(todos) });
+        // B. Restore Plan Histories
+        if (historiesToInsert.length > 0) {
+          await this._fetch(`${url}/plan_histories`, { method: 'POST', headers, body: JSON.stringify(historiesToInsert) });
         }
-        if (do_logs.length > 0) {
-          await this._fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(do_logs) });
+        // C. Restore Todos
+        if (todosToInsert.length > 0) {
+          await this._fetch(`${url}/todos`, { method: 'POST', headers, body: JSON.stringify(todosToInsert) });
         }
-        if (see_reviews.length > 0) {
-          await this._fetch(`${url}/see_reviews`, { method: 'POST', headers, body: JSON.stringify(see_reviews) });
+        // D. Restore Do Logs
+        if (logsToInsert.length > 0) {
+          await this._fetch(`${url}/do_logs`, { method: 'POST', headers, body: JSON.stringify(logsToInsert) });
+        }
+        // E. Restore See Reviews
+        if (reviewsToInsert.length > 0) {
+          await this._fetch(`${url}/see_reviews`, { method: 'POST', headers, body: JSON.stringify(reviewsToInsert) });
         }
       }
 
-      return newStore;
+      return { success: true, ...newStore };
     } catch (err) {
       this._saveData(previousBackup);
       throw new Error(`백업 복원에 실패하여 원상태로 롤백되었습니다: ${err.message}`);
     }
+  }
+
+  async importBackup(jsonString, fileSize) {
+    if (fileSize && fileSize > (CONFIG.MAX_IMPORT_SIZE_BYTES || 5 * 1024 * 1024)) {
+      throw new Error(`백업 파일 크기는 최대 5MB를 초과할 수 없습니다.`);
+    }
+    return await this.restoreBackup(jsonString);
   }
 
   async migrateLocalData() {

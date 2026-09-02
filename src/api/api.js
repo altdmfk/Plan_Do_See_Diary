@@ -9,35 +9,71 @@ import { decryptText, isEncrypted } from '../utils/crypto.js';
 import { authClient } from '../auth/auth.js';
 
 const LEGACY_STORAGE_KEYS = [
+  'plan_do_see_backup',
+  'pds_legacy_data',
+  'pds_db_v2_scope_a',
+  'pds_db_v2',
   'pds_plans_v2',
-  'pds_plan_histories_v2', 'pds_todos_v2', 'pds_do_logs_v2', 'pds_see_reviews_v2'
+  'pds_plan_histories_v2',
+  'pds_todos_v2',
+  'pds_do_logs_v2',
+  'pds_see_reviews_v2',
+  'plans',
+  'plan_histories',
+  'todos',
+  'do_logs',
+  'see_reviews'
 ];
 
 function getMigrationFlagKey() {
   const userId = authClient.getUserId();
-  if (!userId) throw new Error('로그인 정보를 확인할 수 없습니다.');
+  if (!userId) return 'pds_migrated_anon';
   return `pds_migrated_${userId}`;
 }
 
 function getLegacyLocalPayload() {
   if (typeof localStorage === 'undefined') return null;
-  for (const key of ['pds_db_v2']) {
+
+  // 1. Unified full JSON payload keys
+  for (const key of ['plan_do_see_backup', 'pds_legacy_data', 'pds_db_v2_scope_a', 'pds_db_v2']) {
     const raw = localStorage.getItem(key);
-    if (raw) return raw;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const hasPlans = Array.isArray(parsed.plans) && parsed.plans.length > 0;
+          const hasTodos = Array.isArray(parsed.todos) && parsed.todos.length > 0;
+          const hasPlanList = Array.isArray(parsed.plan_list) && parsed.plan_list.length > 0;
+          const hasTasks = Array.isArray(parsed.tasks) && parsed.tasks.length > 0;
+          if (hasPlans || hasTodos || hasPlanList || hasTasks) {
+            return raw;
+          }
+        }
+      } catch (e) {}
+    }
   }
+
+  // 2. Multi-key legacy structures
   const parts = {
-    plans: localStorage.getItem('pds_plans_v2'),
-    plan_histories: localStorage.getItem('pds_plan_histories_v2'),
-    todos: localStorage.getItem('pds_todos_v2'),
-    do_logs: localStorage.getItem('pds_do_logs_v2'),
-    see_reviews: localStorage.getItem('pds_see_reviews_v2')
+    plans: localStorage.getItem('plans') || localStorage.getItem('pds_plans_v2'),
+    plan_histories: localStorage.getItem('plan_histories') || localStorage.getItem('pds_plan_histories_v2'),
+    todos: localStorage.getItem('todos') || localStorage.getItem('pds_todos_v2'),
+    do_logs: localStorage.getItem('do_logs') || localStorage.getItem('pds_do_logs_v2'),
+    see_reviews: localStorage.getItem('see_reviews') || localStorage.getItem('pds_see_reviews_v2')
   };
-  if (!Object.values(parts).some(Boolean)) return null;
-  try {
-    return JSON.stringify(Object.fromEntries(Object.entries(parts).map(([key, value]) => [key, value ? JSON.parse(value) : []])));
-  } catch {
-    return null;
+
+  if (Object.values(parts).some(Boolean)) {
+    try {
+      const combined = Object.fromEntries(
+        Object.entries(parts).map(([key, value]) => [key, value ? JSON.parse(value) : []])
+      );
+      if ((Array.isArray(combined.plans) && combined.plans.length > 0) || (Array.isArray(combined.todos) && combined.todos.length > 0)) {
+        return JSON.stringify(combined);
+      }
+    } catch (e) {}
   }
+
+  return null;
 }
 
 async function decryptLocalPayload(payload) {

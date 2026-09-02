@@ -131,6 +131,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       updateAppVisibility(true);
       await appState.init();
+
+      if (API.hasPendingLocalMigration()) {
+        modalManager.open('migrationModal');
+      }
     } catch (err) {
       if (err.status === 401 || (err.message && err.message.includes('401'))) {
         authClient.clearSession();
@@ -242,10 +246,8 @@ function bindAuthForms() {
         authEmail.value = '';
         authPassword.value = '';
 
-        // Prompt migration if local T06 data exists
-        const localKey = 'pds_db_v2_scope_a';
-        const hasLocalData = typeof localStorage !== 'undefined' && localStorage.getItem(localKey);
-        if (hasLocalData) {
+        // Prompt migration if local legacy data exists and has not been migrated
+        if (API.hasPendingLocalMigration()) {
           modalManager.open('migrationModal');
         }
       } else if (action === 'signup') {
@@ -585,6 +587,12 @@ function bindHeaderControls() {
     modalManager.close('migrationModal');
   });
   document.getElementById('migrationSkipBtn')?.addEventListener('click', () => {
+    try {
+      const userId = authClient.getUserId();
+      if (userId && typeof localStorage !== 'undefined') {
+        localStorage.setItem(`pds_migrated_${userId}`, 'true');
+      }
+    } catch (e) {}
     modalManager.close('migrationModal');
   });
   document.getElementById('migrationImportBtn')?.addEventListener('click', async () => {
@@ -1743,8 +1751,8 @@ function openPlanHistoryModal(planId) {
     appState.setSelectedPlan(planId);
   }
   const state = appState.getState();
-  const plan = state.plans.find(p => p.id === planId);
-  const histories = state.plan_histories.filter(h => h.plan_id === planId);
+  const plan = state.plans.find(p => String(p.id) === String(planId));
+  const histories = state.plan_histories.filter(h => String(h.plan_id) === String(planId));
   renderPlanHistoryModal(plan, histories);
   modalManager.open('historyModal');
 }

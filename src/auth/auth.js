@@ -292,20 +292,19 @@ export const authClient = {
           msg: '이미 가입된 이메일입니다.'
         };
       }
-      if (data.session) {
+      if (data.session && data.session.access_token) {
         if (!data.session.user && data.user) data.session.user = data.user;
         if (data.session.user && !data.session.user.email) data.session.user.email = normEmail;
         this.setSession(data.session);
-      } else if (data.user) {
-        if (!data.user.email) data.user.email = normEmail;
-        this.setSession({ ...data, access_token: data.access_token || 'mock_token' });
+      } else {
+        this.clearSession();
       }
       return {
         success: true,
         data,
-        session: data.session || data,
+        session: (data.session && data.session.access_token) ? data.session : null,
         user: data.user,
-        access_token: data.access_token || (data.session && data.session.access_token)
+        access_token: data.session?.access_token || null
       };
     } catch (err) {
       return {

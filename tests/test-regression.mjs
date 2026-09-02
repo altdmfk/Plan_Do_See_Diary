@@ -1149,6 +1149,52 @@ async function runRegressionTests() {
   const r2Histories = appState.getState().plan_histories.filter(h => h.plan_id === r2Plan.id);
   assert(r2Histories.length === 1, 'Check 3 (Histories after 1 edit): Only 1 revision history must exist after 1 edit (no duplicates)');
 
+  // ----------------------------------------------------------------
+  // TEST 32: Backup Restore & JSON Import (dbClient.restoreBackup)
+  // ----------------------------------------------------------------
+  console.log('\n--- [32] Backup Restore & JSON Import (dbClient.restoreBackup) ---');
+  const sampleBackup = {
+    plans: [{
+      id: crypto.randomUUID(),
+      title: 'Imported Backup Plan',
+      period_start: '2026-09-01',
+      period_end: '2026-09-10',
+      priority: 'high',
+      success_criteria: 'Import test criteria',
+      estimated_hours: 10,
+      status: 'active'
+    }],
+    plan_histories: [],
+    todos: [{
+      id: crypto.randomUUID(),
+      title: 'Imported Todo Item',
+      due_date: '2026-09-05',
+      priority: 'medium',
+      estimated_minutes: 45,
+      is_completed: false
+    }],
+    do_logs: [],
+    see_reviews: []
+  };
+  sampleBackup.todos[0].plan_id = sampleBackup.plans[0].id;
+
+  // ----------------------------------------------------------------
+  // TEST 33: Legacy Data Detection & Migration (v1.0 formats)
+  // ----------------------------------------------------------------
+  console.log('\n--- [33] Legacy Data Detection & Migration (v1.0 formats) ---');
+  const legacyTestData = {
+    version: "1.0.0",
+    plans: [{ id: "legacy-p1", title: "Legacy Plan 1", period_start: "2026-09-01", period_end: "2026-09-07", priority: "urgent", success_criteria: "Legacy Goal", estimated_hours: 10, status: "active" }],
+    todos: [{ id: "legacy-t1", plan_id: "legacy-p1", title: "Legacy Todo 1", due_date: "2026-09-02", priority: "high", estimated_minutes: 30, is_completed: false }]
+  };
+  globalThis.localStorage.setItem('plan_do_see_backup', JSON.stringify(legacyTestData));
+  assert(API.hasPendingLocalMigration() === true, 'API.hasPendingLocalMigration detects plan_do_see_backup key');
+  
+  await API.migrateLocalData();
+  assert(globalThis.localStorage.getItem('plan_do_see_backup') === null, 'Legacy key is cleanly purged after migration');
+  await appState.refreshData();
+  assert(appState.getState().plans.some(p => p.title === "Legacy Plan 1"), 'Legacy plan successfully migrated to active state');
+
   console.log('\n====================================================');
   console.log(`🎉 ALL REGRESSION TESTS PASSED! (${passedTests}/${totalTests})`);
   console.log('====================================================\n');
