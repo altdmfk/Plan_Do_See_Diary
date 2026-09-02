@@ -260,13 +260,18 @@ function bindAuthForms() {
           return;
         }
 
+        if (result?.session?.access_token) {
+          isSubmittingAuth = false;
+          await handleAuth('login');
+          return;
+        }
+
         if (authPassword) authPassword.value = '';
         authErrorMsg.style.color = 'var(--color-primary)';
         authErrorMsg.textContent = i18n.getLang() === 'ko' ? '계정이 생성되었습니다. 로그인해 주세요.' : 'Account created successfully. Please log in.';
         setTimeout(() => {
           if (authErrorMsg && (authErrorMsg.textContent.includes('생성') || authErrorMsg.textContent.includes('created'))) authErrorMsg.textContent = '';
         }, 4000);
-        setAuthMode('login');
       }
     } catch (e) {
       authErrorMsg.style.color = 'var(--color-danger)';
