@@ -242,6 +242,8 @@ function bindAuthForms() {
         API.clearSession();
         updateAppVisibility(true);
         initTheme();
+        // Brief 300ms synchronization buffer to allow Supabase Auth server clock skew to align with PostgREST
+        await new Promise(r => setTimeout(r, 300));
         await appState.init();
         authEmail.value = '';
         authPassword.value = '';
@@ -270,6 +272,8 @@ function bindAuthForms() {
           API.clearSession();
           updateAppVisibility(true);
           initTheme();
+          // Brief 300ms synchronization buffer to allow Supabase Auth server clock skew to align with PostgREST
+          await new Promise(r => setTimeout(r, 300));
           await appState.init();
           authEmail.value = '';
           authPassword.value = '';

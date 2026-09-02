@@ -296,7 +296,7 @@ class SupabaseEngine {
 
   // --- QUERY & MUTATION INTERFACES (RLS & E2EE Automatic Encryption) ---
 
-  async _fetch(url, options = {}, retries = 2) {
+  async _fetch(url, options = {}, retries = 3) {
     // Ensure cloud headers have valid Authorization token if user is authenticated
     if (this.isCloudConfigured && (!options.headers?.Authorization || options.headers.Authorization.includes(CONFIG.SUPABASE.ANON_KEY))) {
       const token = authClient.getAccessToken();
@@ -311,8 +311,9 @@ class SupabaseEngine {
 
     let res = await fetch(url, options);
     if (!res.ok && res.status === 401 && retries > 0) {
-      // Delay for session hydration buffer or clock skew
-      await new Promise(r => setTimeout(r, 400));
+      // Progressive delay buffer for Supabase server clock skew (PGRST303: JWT issued at future)
+      const delay = (4 - retries) * 400;
+      await new Promise(r => setTimeout(r, delay));
       authClient.init();
       const token = authClient.getAccessToken();
       if (token) {
