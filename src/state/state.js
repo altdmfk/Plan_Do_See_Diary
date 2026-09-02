@@ -290,12 +290,10 @@ class StateStore {
         const hasIncompleteDos = pTodos.some(t => !t.is_completed && t.status !== 'completed');
 
         let isCompleted = false;
-        if (isFeedbackConverted) {
+        if (p.status === 'completed' || p.is_completed === true || allDosCompleted || isFeedbackConverted) {
           isCompleted = true;
-        } else if (hasIncompleteDos) {
+        } else {
           isCompleted = false;
-        } else if (allDosCompleted || p.status === 'completed' || p.is_completed === true) {
-          isCompleted = true;
         }
 
         if (planStatus === 'completed') {

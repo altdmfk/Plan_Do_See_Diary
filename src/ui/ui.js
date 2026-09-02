@@ -574,27 +574,22 @@ export function renderPlanColumn(plansOrPagination, selectedPlanId, allPlans = [
     const hasIncompleteDos = planTodos.some(t => !t.is_completed && t.status !== 'completed');
 
     // Strict completed condition:
-    // If feedback converted -> completed
-    // Else if has incomplete items -> strictly not completed
-    // Else if all tasks completed or status is completed -> completed
+    // 1. Explicitly completed status (or is_completed flag)
+    // 2. All tasks completed
+    // 3. Converted to a feedback loop plan
     let isPlanCompleted = false;
-    if (isFeedbackConverted) {
+    if (plan.status === 'completed' || plan.is_completed === true || allDosCompleted || isFeedbackConverted) {
       isPlanCompleted = true;
-    } else if (hasIncompleteDos) {
+    } else {
       isPlanCompleted = false;
-    } else if (allDosCompleted || plan.status === 'completed' || plan.is_completed === true) {
-      isPlanCompleted = true;
     }
-    const planCompletedClass = isPlanCompleted ? 'completed feedback-linked-plan' : '';
+    const planCompletedClass = isPlanCompleted ? 'completed' : '';
     const titleCompletedClass = isPlanCompleted ? 'completed' : '';
     const planMinutes = Number(plan.estimated_hours) || 0;
 
     let statusText = '';
     let statusBadgeClass = 'active';
-    if (isFeedbackConverted) {
-      statusText = i18n.getLang() === 'ko' ? '피드백 연계 완료' : 'Feedback Linked';
-      statusBadgeClass = 'completed';
-    } else if (isPlanCompleted && !hasIncompleteDos) {
+    if (isPlanCompleted) {
       statusText = i18n.getLang() === 'ko' ? '완료' : 'Completed';
       statusBadgeClass = 'completed';
     } else {
@@ -603,7 +598,7 @@ export function renderPlanColumn(plansOrPagination, selectedPlanId, allPlans = [
     }
 
     html += `
-      <div class="card plan-card ${selectedClass} ${planCompletedClass}" data-plan-id="${plan.id}" tabindex="0" ${isFeedbackConverted ? `title="${i18n.getLang() === 'ko' ? '피드백 개선 계획으로 연계된 계획' : 'Converted to feedback improvement plan'}"` : ''}>
+      <div class="card plan-card ${selectedClass} ${planCompletedClass}" data-plan-id="${plan.id}" tabindex="0">
         <div class="card-header">
           <div class="card-title plan-title ${titleCompletedClass}">${escapeHtml(plan.title)}</div>
           <div style="display: flex; align-items: center; gap: 0.35rem;">
@@ -615,7 +610,7 @@ export function renderPlanColumn(plansOrPagination, selectedPlanId, allPlans = [
           <span>${escapeHtml(plan.period_start)} ~ ${escapeHtml(plan.period_end)} (${i18n.t('tzLabel')})</span>
           <span>${planMinutes}${i18n.t('minutesUnit')}</span>
           ${isSelected ? `<span class="badge-status active">${i18n.t('selectedBadge')}</span>` : ''}
-          ${isFeedbackConverted ? `<span class="badge-status completed" style="font-size: 0.68rem; font-weight: 700;">✓ 피드백 연계</span>` : (isPlanCompleted && !hasIncompleteDos ? `<span class="badge-status completed" style="font-size: 0.68rem; font-weight: 700;">✓ 완료</span>` : '')}
+          ${isPlanCompleted ? `<span class="badge-status completed" style="font-size: 0.68rem; font-weight: 700;">✓ 완료</span>` : ''}
         </div>
         ${plan.success_criteria ? `<div class="card-body-text" style="font-size: 0.78rem; opacity: 0.85;">${i18n.t('targetLabel')} ${escapeHtml(plan.success_criteria)}</div>` : ''}
         <div class="card-actions">
@@ -1204,9 +1199,7 @@ export function showLoading(text) {
       if (textEl) textEl.textContent = text;
     }
     overlay.style.display = 'flex';
-    requestAnimationFrame(() => {
-      overlay.classList.add('active');
-    });
+    overlay.classList.add('active');
   }
   const board = document.getElementById('mainBoard');
   if (board) {
@@ -1219,11 +1212,7 @@ export function hideLoading() {
   const overlay = document.getElementById('globalLoadingOverlay');
   if (overlay) {
     overlay.classList.remove('active');
-    setTimeout(() => {
-      if (!overlay.classList.contains('active')) {
-        overlay.style.display = 'none';
-      }
-    }, 200);
+    overlay.style.display = 'none';
   }
   const board = document.getElementById('mainBoard');
   if (board) {

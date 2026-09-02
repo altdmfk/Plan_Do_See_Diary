@@ -62,6 +62,34 @@ class SupabaseEngine {
     return `${CONFIG.STORAGE_KEYS.DB_STORE_PREFIX}${this._getCurrentUserKey()}`;
   }
 
+  _getPlanLinksKey() {
+    return `pds_plan_links_${this._getCurrentUserKey()}`;
+  }
+
+  _getPlanLinks() {
+    const raw = storage.getItem(this._getPlanLinksKey());
+    if (raw) {
+      try {
+        return JSON.parse(raw) || {};
+      } catch (e) {}
+    }
+    return {};
+  }
+
+  _setPlanLink(childId, parentId) {
+    if (!childId || !parentId) return;
+    const links = this._getPlanLinks();
+    links[String(childId)] = String(parentId);
+    storage.setItem(this._getPlanLinksKey(), JSON.stringify(links));
+  }
+
+  _removePlanLink(childId) {
+    if (!childId) return;
+    const links = this._getPlanLinks();
+    delete links[String(childId)];
+    storage.setItem(this._getPlanLinksKey(), JSON.stringify(links));
+  }
+
   _getCloudHeaders() {
     const token = authClient.getAccessToken();
     return {
@@ -75,7 +103,13 @@ class SupabaseEngine {
   _loadData() {
     const userKey = this._getCurrentUserKey();
     if (this.memoryStore.has(userKey)) {
-      return this.memoryStore.get(userKey);
+      const mem = this.memoryStore.get(userKey);
+      const planLinks = this._getPlanLinks();
+      for (const p of (mem.plans || [])) {
+        if (p.source_plan_id) planLinks[p.id] = p.source_plan_id;
+        else if (planLinks[p.id]) p.source_plan_id = planLinks[p.id];
+      }
+      return mem;
     }
     const raw = storage.getItem(this._getStorageKey());
     if (raw) {
@@ -86,6 +120,14 @@ class SupabaseEngine {
         if (!Array.isArray(parsed.todos)) parsed.todos = [];
         if (!Array.isArray(parsed.do_logs)) parsed.do_logs = [];
         if (!Array.isArray(parsed.see_reviews)) parsed.see_reviews = [];
+        
+        const planLinks = this._getPlanLinks();
+        for (const p of (parsed.plans || [])) {
+          if (p.source_plan_id) planLinks[p.id] = p.source_plan_id;
+          else if (planLinks[p.id]) p.source_plan_id = planLinks[p.id];
+        }
+        storage.setItem(this._getPlanLinksKey(), JSON.stringify(planLinks));
+
         this.memoryStore.set(userKey, parsed);
         return parsed;
       } catch (e) {
@@ -196,36 +238,57 @@ class SupabaseEngine {
   }
 
   _mergeData(local, cloud) {
-    const plansMap = new Map((local.plans || []).map(p => [p.id, p]));
-    for (const p of (cloud.plans || [])) {
-      plansMap.set(p.id, p);
+    const planLinks = this._getPlanLinks();
+    for (const lp of (local.plans || [])) {
+      if (lp.source_plan_id) planLinks[lp.id] = lp.source_plan_id;
     }
-    const historiesMap = new Map((local.plan_histories || []).map(h => [h.id, h]));
-    for (const h of (cloud.plan_histories || [])) {
-      historiesMap.set(h.id, h);
-    }
-    const todosMap = new Map((local.todos || []).map(t => [t.id, t]));
-    for (const t of (cloud.todos || [])) {
-      todosMap.set(t.id, t);
-    }
-    
-    // Deduplicate do_logs strictly by log primary key id
-    const logsMap = new Map((local.do_logs || []).map(l => [l.id, l]));
-    for (const l of (cloud.do_logs || [])) {
-      logsMap.set(l.id, l);
-    }
+    storage.setItem(this._getPlanLinksKey(), JSON.stringify(planLinks));
 
-    const reviewsMap = new Map((local.see_reviews || []).map(r => [r.id, r]));
-    for (const r of (cloud.see_reviews || [])) {
-      reviewsMap.set(r.id, r);
-    }
+    // Merge strategy: prefer record with the later updated_at timestamp.
+    // This prevents a race condition where a local write (e.g. status: 'completed')
+    // is overwritten by a stale cloud record before the PATCH reaches Supabase.
+    const mergeByLatest = (localArr, cloudArr) => {
+      const map = new Map((localArr || []).map(r => [r.id, r]));
+      for (const cloudRecord of (cloudArr || [])) {
+        const localRecord = map.get(cloudRecord.id);
+        const sourcePlanId = localRecord?.source_plan_id || cloudRecord.source_plan_id || planLinks[cloudRecord.id] || null;
+        if (!localRecord) {
+          map.set(cloudRecord.id, {
+            ...cloudRecord,
+            ...(sourcePlanId ? { source_plan_id: sourcePlanId } : {})
+          });
+        } else {
+          const localTs = localRecord.updated_at || localRecord.changed_at || localRecord.created_at || '';
+          const cloudTs = cloudRecord.updated_at || cloudRecord.changed_at || cloudRecord.created_at || '';
+          if (cloudTs >= localTs) {
+            map.set(cloudRecord.id, {
+              ...cloudRecord,
+              ...(sourcePlanId ? { source_plan_id: sourcePlanId } : {})
+            });
+          } else {
+            map.set(cloudRecord.id, {
+              ...localRecord,
+              ...(sourcePlanId ? { source_plan_id: sourcePlanId } : {})
+            });
+          }
+        }
+      }
+      return Array.from(map.values());
+    };
+
+    // plan_histories and do_logs are append-only: union without timestamp preference
+    const unionById = (localArr, cloudArr) => {
+      const map = new Map((localArr || []).map(r => [r.id, r]));
+      for (const r of (cloudArr || [])) map.set(r.id, r);
+      return Array.from(map.values());
+    };
 
     const merged = {
-      plans: Array.from(plansMap.values()),
-      plan_histories: Array.from(historiesMap.values()),
-      todos: Array.from(todosMap.values()),
-      do_logs: Array.from(logsMap.values()),
-      see_reviews: Array.from(reviewsMap.values())
+      plans: mergeByLatest(local.plans, cloud.plans),
+      plan_histories: unionById(local.plan_histories, cloud.plan_histories),
+      todos: mergeByLatest(local.todos, cloud.todos),
+      do_logs: unionById(local.do_logs, cloud.do_logs),
+      see_reviews: mergeByLatest(local.see_reviews, cloud.see_reviews)
     };
     this._saveData(merged);
     return merged;
@@ -402,6 +465,10 @@ class SupabaseEngine {
       updated_at: new Date().toISOString()
     };
 
+    if (payload.source_plan_id) {
+      this._setPlanLink(newPlan.id, payload.source_plan_id);
+    }
+
     const data = this._loadData();
     data.plans.unshift(newPlan);
     this._saveData(data);
@@ -409,10 +476,14 @@ class SupabaseEngine {
     if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
         const userId = authClient.getUserId();
+        // Whitelist: only send columns that exist in the Supabase plans table
+        const PLAN_CLOUD_COLUMNS = ['id', 'user_id', 'title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_hours', 'status', 'created_at', 'updated_at'];
+        const fullPayload = { ...payload, id: newPlan.id, ...(userId ? { user_id: userId } : {}) };
+        const cloudPayload = Object.fromEntries(Object.entries(fullPayload).filter(([k]) => PLAN_CLOUD_COLUMNS.includes(k)));
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
           method: 'POST',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify({ ...payload, id: newPlan.id, ...(userId ? { user_id: userId } : {}) })
+          body: JSON.stringify(cloudPayload)
         });
       } catch (err) {
         console.warn('Cloud createPlan sync warning:', err.message);
@@ -426,6 +497,21 @@ class SupabaseEngine {
     const data = this._loadData();
     const index = data.plans.findIndex(p => String(p.id) === String(planId));
     if (index === -1) {
+      // Plan not in local store — try direct cloud PATCH if cloud is configured
+      if (this.isCloudConfigured && authClient.isAuthenticated() && updates.status) {
+        try {
+          const PLAN_CLOUD_COLUMNS = ['title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_hours', 'status', 'updated_at'];
+          const patchBody = Object.fromEntries(Object.entries({ ...updates, updated_at: new Date().toISOString() }).filter(([k]) => PLAN_CLOUD_COLUMNS.includes(k)));
+          await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}`, {
+            method: 'PATCH',
+            headers: this._getCloudHeaders(),
+            body: JSON.stringify(patchBody)
+          });
+          return { id: planId, ...patchBody };
+        } catch (cloudErr) {
+          throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
+        }
+      }
       throw new Error('계획을 찾을 수 없거나 접근이 거부되었습니다. (PostgreSQL RLS 404/403)');
     }
 
@@ -470,37 +556,41 @@ class SupabaseEngine {
     this._saveData(data);
 
     if (this.isCloudConfigured && authClient.isAuthenticated()) {
+      const userId = authClient.getUserId();
+      // plan_histories POST: fire-and-forget — failure must NOT block the plans PATCH
+      const cloudHistoryPayload = {
+        id: historyEntry.id,
+        plan_id: historyEntry.plan_id,
+        revision_number: historyEntry.revision_number,
+        title: historyEntry.title,
+        period_start: historyEntry.period_start,
+        period_end: historyEntry.period_end,
+        priority: historyEntry.priority,
+        estimated_hours: historyEntry.estimated_hours,
+        success_criteria: historyEntry.success_criteria,
+        status: historyEntry.status,
+        reason: historyEntry.reason,
+        changed_at: historyEntry.changed_at,
+        ...(userId ? { user_id: userId } : {})
+      };
+      this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plan_histories`, {
+        method: 'POST',
+        headers: this._getCloudHeaders(),
+        body: JSON.stringify(cloudHistoryPayload)
+      }).catch(err => console.warn('Cloud plan_histories sync warning:', err.message));
+
+      // plans PATCH: MUST be awaited so the cloud reflects updated status
+      // before refreshData() fetches and merges from cloud
       try {
-        const userId = authClient.getUserId();
-        const cloudHistoryPayload = {
-          id: historyEntry.id,
-          plan_id: historyEntry.plan_id,
-          revision_number: historyEntry.revision_number,
-          title: historyEntry.title,
-          period_start: historyEntry.period_start,
-          period_end: historyEntry.period_end,
-          priority: historyEntry.priority,
-          estimated_hours: historyEntry.estimated_hours,
-          success_criteria: historyEntry.success_criteria,
-          status: historyEntry.status,
-          reason: historyEntry.reason,
-          changed_at: historyEntry.changed_at,
-          ...(userId ? { user_id: userId } : {})
-        };
-
-        await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plan_histories`, {
-          method: 'POST',
-          headers: this._getCloudHeaders(),
-          body: JSON.stringify(cloudHistoryPayload)
-        });
-
+        const PLAN_CLOUD_COLUMNS = ['id', 'user_id', 'title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_hours', 'status', 'created_at', 'updated_at'];
+        const cloudPlanPatch = Object.fromEntries(Object.entries(updatedPlan).filter(([k]) => PLAN_CLOUD_COLUMNS.includes(k)));
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${planId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify(updatedPlan)
+          body: JSON.stringify(cloudPlanPatch)
         });
       } catch (err) {
-        console.warn('Cloud updatePlan sync warning:', err.message);
+        console.warn('Cloud plans PATCH sync warning:', err.message);
       }
     }
 
@@ -515,7 +605,8 @@ class SupabaseEngine {
     }
 
     const deletedPlan = data.plans[index];
-    const sourcePlanId = deletedPlan.source_plan_id || deletedPlan.parent_plan_id;
+    const planLinks = this._getPlanLinks();
+    const sourcePlanId = deletedPlan.source_plan_id || deletedPlan.parent_plan_id || planLinks[planId];
 
     // Cascade delete in memory
     const childTodos = data.todos.filter(t => String(t.plan_id) === String(planId));
@@ -533,7 +624,10 @@ class SupabaseEngine {
       const sourcePlan = data.plans.find(p => String(p.id) === String(sourcePlanId));
       if (sourcePlan) {
         // Check if other feedback improvement plans are still linked to this source plan
-        const hasOtherLinkedFeedback = data.plans.some(p => (p.source_plan_id === sourcePlan.id || p.parent_plan_id === sourcePlan.id));
+        const hasOtherLinkedFeedback = data.plans.some(p => (
+          String(p.id) !== String(planId) &&
+          (p.source_plan_id === sourcePlan.id || p.parent_plan_id === sourcePlan.id || planLinks[p.id] === sourcePlan.id)
+        ));
         if (!hasOtherLinkedFeedback) {
           const sourceTodos = data.todos.filter(t => String(t.plan_id) === String(sourcePlan.id));
           const allCompleted = sourceTodos.length > 0 && sourceTodos.every(t => t.is_completed || t.status === 'completed');
@@ -541,11 +635,14 @@ class SupabaseEngine {
             // Revert status to active/in_progress and remove completed flag
             sourcePlan.status = 'active';
             sourcePlan.is_completed = false;
+            sourcePlan.updated_at = new Date().toISOString();
             sourcePlanToUpdate = { ...sourcePlan };
           }
         }
       }
     }
+
+    this._removePlanLink(planId);
 
     this._saveData(data);
 
@@ -557,14 +654,17 @@ class SupabaseEngine {
         });
 
         if (sourcePlanToUpdate) {
+          const PLAN_CLOUD_COLUMNS = ['id', 'user_id', 'title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_hours', 'status', 'created_at', 'updated_at'];
+          const patchBody = Object.fromEntries(
+            Object.entries({
+              status: sourcePlanToUpdate.status || 'active',
+              updated_at: new Date().toISOString()
+            }).filter(([k]) => PLAN_CLOUD_COLUMNS.includes(k))
+          );
           await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${sourcePlanToUpdate.id}`, {
             method: 'PATCH',
             headers: this._getCloudHeaders(),
-            body: JSON.stringify({
-              status: sourcePlanToUpdate.status,
-              is_completed: false,
-              revision_reason: 'Reverted to active state after linked feedback plan deletion'
-            })
+            body: JSON.stringify(patchBody)
           }).catch(() => {});
         }
       } catch (err) {
@@ -615,7 +715,7 @@ class SupabaseEngine {
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
           method: 'POST',
           headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify({ ...parentPlan })
+          body: JSON.stringify(Object.fromEntries(Object.entries(parentPlan).filter(([k]) => ['id', 'user_id', 'title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_hours', 'status', 'created_at', 'updated_at'].includes(k))))
         }).catch(() => {});
 
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
@@ -657,10 +757,12 @@ class SupabaseEngine {
 
     if (this.isCloudConfigured && authClient.isAuthenticated()) {
       try {
+        const TODO_CLOUD_COLUMNS = ['id', 'user_id', 'plan_id', 'title', 'description', 'due_date', 'priority', 'tags', 'estimated_minutes', 'is_completed', 'completed_at', 'sort_order', 'created_at', 'updated_at'];
+        const cloudTodoPatch = Object.fromEntries(Object.entries(updatedTodo).filter(([k]) => TODO_CLOUD_COLUMNS.includes(k)));
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos?id=eq.${todoId}`, {
           method: 'PATCH',
           headers: this._getCloudHeaders(),
-          body: JSON.stringify(updatedTodo)
+          body: JSON.stringify(cloudTodoPatch)
         });
       } catch (err) {
         console.warn('Cloud updateTodo sync warning:', err.message);
@@ -741,7 +843,7 @@ class SupabaseEngine {
           await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
             method: 'POST',
             headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify({ ...parentPlan })
+            body: JSON.stringify(Object.fromEntries(Object.entries(parentPlan).filter(([k]) => ['id', 'user_id', 'title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_hours', 'status', 'created_at', 'updated_at'].includes(k))))
           }).catch(() => {});
         }
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/todos`, {
@@ -974,7 +1076,7 @@ class SupabaseEngine {
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans`, {
           method: 'POST',
           headers: { ...this._getCloudHeaders(), 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify({ ...targetPlan })
+          body: JSON.stringify(Object.fromEntries(Object.entries(targetPlan).filter(([k]) => ['id', 'user_id', 'title', 'period_start', 'period_end', 'priority', 'success_criteria', 'estimated_hours', 'status', 'created_at', 'updated_at'].includes(k))))
         }).catch(() => {});
 
         await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/see_reviews`, {

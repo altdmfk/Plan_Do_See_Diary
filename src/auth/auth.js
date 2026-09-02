@@ -292,19 +292,32 @@ export const authClient = {
           msg: '이미 가입된 이메일입니다.'
         };
       }
+      let activeSession = null;
       if (data.session && data.session.access_token) {
         if (!data.session.user && data.user) data.session.user = data.user;
         if (data.session.user && !data.session.user.email) data.session.user.email = normEmail;
-        this.setSession(data.session);
+        activeSession = data.session;
+        this.setSession(activeSession);
+      } else if (data.access_token) {
+        activeSession = {
+          access_token: data.access_token,
+          token_type: data.token_type || 'bearer',
+          expires_in: data.expires_in,
+          expires_at: data.expires_at,
+          refresh_token: data.refresh_token,
+          user: data.user || { id: data.user?.id, email: normEmail }
+        };
+        if (activeSession.user && !activeSession.user.email) activeSession.user.email = normEmail;
+        this.setSession(activeSession);
       } else {
         this.clearSession();
       }
       return {
         success: true,
         data,
-        session: (data.session && data.session.access_token) ? data.session : null,
+        session: activeSession,
         user: data.user,
-        access_token: data.session?.access_token || null
+        access_token: activeSession?.access_token || null
       };
     } catch (err) {
       return {

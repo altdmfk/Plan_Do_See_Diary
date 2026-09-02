@@ -260,9 +260,23 @@ function bindAuthForms() {
           return;
         }
 
-        if (result?.session?.access_token) {
-          isSubmittingAuth = false;
-          await handleAuth('login');
+        if (result?.session?.access_token || result?.access_token) {
+          if (rememberEmailChk && rememberEmailChk.checked) {
+            setSavedEmail(email.trim());
+          } else {
+            setSavedEmail(null);
+          }
+          appState.resetGlobalState();
+          API.clearSession();
+          updateAppVisibility(true);
+          initTheme();
+          await appState.init();
+          authEmail.value = '';
+          authPassword.value = '';
+
+          if (API.hasPendingLocalMigration()) {
+            modalManager.open('migrationModal');
+          }
           return;
         }
 
@@ -274,6 +288,7 @@ function bindAuthForms() {
         }, 4000);
       }
     } catch (e) {
+      hideLoading();
       authErrorMsg.style.color = 'var(--color-danger)';
       authErrorMsg.textContent = e?.msg || e?.message || '처리 중 오류가 발생했습니다.';
     } finally {
@@ -1169,10 +1184,34 @@ function bindModalForms() {
 
         if (sourcePlanId) {
           // Explicitly update source plan status to completed upon generating feedback plan
-          await API.updatePlan(sourcePlanId, {
-            status: 'completed',
-            revision_reason: 'Completed and advanced to feedback improvement plan'
-          }).catch(() => {});
+          try {
+            await API.updatePlan(sourcePlanId, {
+              status: 'completed',
+              revision_reason: 'Completed and advanced to feedback improvement plan'
+            });
+          } catch (e) {
+            // Fallback: direct cloud PATCH if local store doesn't have the plan yet
+            console.warn('updatePlan for source plan failed, falling back to direct cloud PATCH:', e.message);
+            try {
+              const { CONFIG } = await import('./config.js');
+              const { authClient } = await import('../auth/auth.js');
+              const token = authClient.getAccessToken();
+              if (token && CONFIG.SUPABASE?.URL) {
+                await fetch(`${CONFIG.SUPABASE.URL}/rest/v1/plans?id=eq.${sourcePlanId}`, {
+                  method: 'PATCH',
+                  headers: {
+                    'apikey': CONFIG.SUPABASE.ANON_KEY,
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=representation'
+                  },
+                  body: JSON.stringify({ status: 'completed', updated_at: new Date().toISOString() })
+                });
+              }
+            } catch (fallbackErr) {
+              console.warn('Cloud PATCH fallback also failed:', fallbackErr.message);
+            }
+          }
         }
 
         if (isReplicateActive && sourcePlanId) {
