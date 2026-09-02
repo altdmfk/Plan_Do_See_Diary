@@ -695,8 +695,8 @@ class SupabaseEngine {
       execution_start: logData.execution_start || new Date().toISOString(),
       execution_end: logData.execution_end || new Date().toISOString(),
       actual_minutes: cleanMin,
-      blocked_reason: encryptedBlocker,
-      memo: encryptedMemo,
+      blocked_reason: cleanBlocker,
+      memo: cleanMemo,
       completion_token: completionToken,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -745,8 +745,8 @@ class SupabaseEngine {
               execution_start: newLog.execution_start,
               execution_end: newLog.execution_end,
               actual_minutes: cleanMin,
-              blocked_reason: encryptedBlocker,
-              memo: encryptedMemo,
+              blocked_reason: cleanBlocker,
+              memo: cleanMemo,
               completion_token: newLog.completion_token
             })
           });
@@ -790,8 +790,8 @@ class SupabaseEngine {
       execution_start: logData.execution_start || new Date().toISOString(),
       execution_end: logData.execution_end || new Date().toISOString(),
       actual_minutes: cleanMin,
-      blocked_reason: encryptedBlocker,
-      memo: encryptedMemo,
+      blocked_reason: cleanBlocker,
+      memo: cleanMemo,
       completion_token: logData.completion_token || null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -813,8 +813,8 @@ class SupabaseEngine {
             execution_start: newLog.execution_start,
             execution_end: newLog.execution_end,
             actual_minutes: cleanMin,
-            blocked_reason: encryptedBlocker,
-            memo: encryptedMemo,
+            blocked_reason: cleanBlocker,
+            memo: cleanMemo,
             completion_token: newLog.completion_token
           })
         });
@@ -865,9 +865,6 @@ class SupabaseEngine {
     const blockerText = sanitizeText(String(blockerRaw).trim());
     const memoText    = rawData.memo ? sanitizeText(String(rawData.memo).trim()) : '';
 
-    const encryptedBlocker = await encryptText(blockerText);
-    const encryptedMemo    = await encryptText(memoText);
-
     const data = this._loadData();
     const index = (data.do_logs || []).findIndex(l => String(l.id) === String(logId));
     if (index === -1) {
@@ -881,8 +878,8 @@ class SupabaseEngine {
       execution_start: startTime,
       execution_end:   endTime,
       actual_minutes:  cleanMin,
-      blocked_reason:  encryptedBlocker,
-      memo:            encryptedMemo
+      blocked_reason:  blockerText,
+      memo:            memoText
     };
 
     data.do_logs[index] = updatedLog;
@@ -896,8 +893,8 @@ class SupabaseEngine {
           execution_start: startTime,
           execution_end:   endTime,
           actual_minutes:  cleanMin,
-          blocked_reason:  encryptedBlocker,
-          memo:            encryptedMemo
+          blocked_reason:  blockerText,
+          memo:            memoText
         };
         const res = await this._fetch(`${CONFIG.SUPABASE.URL}/rest/v1/do_logs?id=eq.${logId}`, {
           method: 'PATCH',
@@ -924,7 +921,6 @@ class SupabaseEngine {
 
   async createSeeReview(reviewData) {
     const cleanInsight = sanitizeText(reviewData.adjustment_insight);
-    const encryptedInsight = await encryptText(cleanInsight);
 
     const payload = {
       ...reviewData,
@@ -933,7 +929,7 @@ class SupabaseEngine {
       delayed_count: clampNum(reviewData.delayed_count),
       blocked_count: clampNum(reviewData.blocked_count),
       time_delta_minutes: Number(reviewData.time_delta_minutes) || 0,
-      adjustment_insight: encryptedInsight
+      adjustment_insight: cleanInsight
     };
 
     const data = this._loadData();

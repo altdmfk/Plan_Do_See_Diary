@@ -152,9 +152,11 @@ export const authClient = {
       const res = await fetch(`${CONFIG.SUPABASE.URL}/auth/v1${endpoint}`, opts);
       let data = {};
       try {
-        const text = await res.text();
-        if (text) {
-          data = JSON.parse(text);
+        if (typeof res.json === 'function') {
+          data = await res.json();
+        } else if (typeof res.text === 'function') {
+          const text = await res.text();
+          if (text) data = JSON.parse(text);
         }
       } catch (e) {
         data = {};
@@ -205,6 +207,7 @@ export const authClient = {
           msg = '이메일 인증이 완료되지 않은 계정입니다.';
         }
 
+        this.clearSession();
         return {
           code,
           error_code,
@@ -230,6 +233,7 @@ export const authClient = {
         access_token: data.access_token
       };
     } catch (err) {
+      this.clearSession();
       return {
         code: 400,
         error_code: 'invalid_credentials',
@@ -273,6 +277,7 @@ export const authClient = {
 
         return {
           code,
+          status: code,
           error_code,
           msg
         };
@@ -282,6 +287,7 @@ export const authClient = {
       if (data?.user?.identities && data.user.identities.length === 0) {
         return {
           code: 422,
+          status: 422,
           error_code: 'user_already_exists',
           msg: '이미 가입된 이메일입니다.'
         };

@@ -221,7 +221,7 @@ export class ModalManager {
 
     // Return DOM focus to the original trigger opener element
     const opener = this._openerElements.get(modalId);
-    if (opener && typeof opener.focus === 'function' && document.body.contains(opener)) {
+    if (opener && typeof opener.focus === 'function' && (!document.body?.contains || document.body.contains(opener))) {
       try { opener.focus(); } catch (e) {}
     }
     this._openerElements.delete(modalId);

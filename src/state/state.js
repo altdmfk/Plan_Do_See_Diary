@@ -104,6 +104,7 @@ class StateStore {
     this.state.see_reviews = [];
     this.state.reviews = [];
     this.state.selectedPlanId = null;
+    this.state.filters = { search: '', priority: 'all', tags: [], planId: null, planPage: 1 };
     this.notify();
   }
 
@@ -350,6 +351,9 @@ class StateStore {
         return (a.period_start || '').localeCompare(b.period_start || '');
       } else if (sortMode === 'priority_desc') {
         return (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0);
+      } else if (sortMode === 'status') {
+        const statusWeights = { draft: 1, pending: 1, active: 2, in_progress: 2, completed: 3, archived: 4 };
+        return (statusWeights[a.status] || 99) - (statusWeights[b.status] || 99);
       }
       return (b.created_at || '').localeCompare(a.created_at || '');
     });
