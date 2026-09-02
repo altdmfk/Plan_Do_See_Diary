@@ -27,7 +27,7 @@ jobs:
 
       - name: Inject Supabase Environment Secrets
         run: |
-          cat << 'EOF' > env.js
+          cat << EOF > env.js
           window.__PDS_SUPABASE_URL = '${{ secrets.SUPABASE_URL }}';
           window.__PDS_SUPABASE_KEY = '${{ secrets.SUPABASE_KEY }}';
           EOF
