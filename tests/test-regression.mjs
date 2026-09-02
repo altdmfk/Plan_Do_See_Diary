@@ -102,11 +102,11 @@ global.document = {
 };
 
 // Dynamically import modules
-const { CONFIG } = await import('../js/config.js');
-const { authClient } = await import('../js/auth.js');
-const { dbClient } = await import('../js/supabaseClient.js');
-const { API } = await import('../js/api.js');
-const { appState } = await import('../js/state.js');
+const { CONFIG } = await import('../src/core/config.js');
+const { authClient } = await import('../src/auth/auth.js');
+const { dbClient } = await import('../src/api/supabaseClient.js');
+const { API } = await import('../src/api/api.js');
+const { appState } = await import('../src/state/state.js');
 
 async function runRegressionTests() {
   console.log('====================================================');

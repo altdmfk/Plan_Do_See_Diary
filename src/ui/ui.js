@@ -2,9 +2,9 @@
  * Plan-Do-See Diary - UI Rendering, XSS Sanitization & Interaction Layer
  */
 
-import { CONFIG } from './config.js';
-import { formatLocalizedDateTime, getKSTToday, isDelayedKST } from './dateUtils.js';
-import { i18n } from './i18n.js';
+import { CONFIG } from '../core/config.js';
+import { formatLocalizedDateTime, isDelayedKST } from '../utils/dateUtils.js';
+import { i18n } from '../utils/i18n.js';
 
 /**
  * Full XSS defense - escapes HTML entities for literal text rendering

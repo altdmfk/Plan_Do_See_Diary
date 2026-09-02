@@ -4,9 +4,9 @@
  */
 
 import { dbClient } from './supabaseClient.js';
-import { validateFileSize, migrateLegacySchema, validateImportPayload } from './validators.js';
-import { decryptText, isEncrypted } from './crypto.js';
-import { authClient } from './auth.js';
+import { validateFileSize, migrateLegacySchema, validateImportPayload } from '../utils/validators.js';
+import { decryptText, isEncrypted } from '../utils/crypto.js';
+import { authClient } from '../auth/auth.js';
 
 const LEGACY_STORAGE_KEYS = [
   'pds_plans_v2',

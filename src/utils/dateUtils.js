@@ -3,7 +3,7 @@
  * Supports KST (Asia/Seoul, UTC+9) and EDT/EST (America/New_York).
  */
 
-import { CONFIG } from './config.js';
+import { CONFIG } from '../core/config.js';
 
 const KST_TIMEZONE = CONFIG.TIMEZONE.CANONICAL;
 const NY_TIMEZONE = 'America/New_York';

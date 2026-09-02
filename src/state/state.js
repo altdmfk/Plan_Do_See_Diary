@@ -3,10 +3,10 @@
  * Features optimistic UI updates and automated error rollback.
  */
 
-import { CONFIG } from './config.js';
-import { authClient } from './auth.js';
-import { API } from './api.js';
-import { getKSTToday, isDelayedKST } from './dateUtils.js';
+import { CONFIG } from '../core/config.js';
+import { authClient } from '../auth/auth.js';
+import { API } from '../api/api.js';
+import { getKSTToday, isDelayedKST } from '../utils/dateUtils.js';
 
 class StateStore {
   constructor() {

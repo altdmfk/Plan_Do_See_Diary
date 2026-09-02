@@ -1,23 +1,51 @@
 # Dependencies
 node_modules/
 
-# Local Environment Variables & Supabase Keys
+# Local Environment Variables, Secrets & Supabase Keys
 .env
+.env*
 .env.local
 .env.*.local
+*.env
 env.js
+secrets/
+*.pem
+*.key
 
-# Logs and debugging
+# Temporary & Ad-hoc Inspection/Audit Scripts
+*.tmp
+*.temp
+temp_*.js
+temp_*.mjs
+temp_*.cjs
+temp_*.py
+audit_*.js
+audit_*.mjs
+audit_*.cjs
+audit_*.py
+fix_*.py
+check_*.cjs
+check.cjs
+find_unused*.cjs
+out.html
+*.out
+
+# Local Scratch, Dumps & Caches
+scripts/tmp/
+.cache/
+.scratch/
+scratch/
+tmp/
+.system_generated/
+
+# Logs and Debugging
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# System and editor files
+# System and Editor Files
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-.system_generated/
-.scratch/
-scratch/

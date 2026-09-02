@@ -50,17 +50,17 @@ async function run() {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' });
 
-  const { CONFIG }                      = await import(pathToFileURL(path.join(rootDir, 'js/config.js')).href);
+  const { CONFIG }                      = await import(pathToFileURL(path.join(rootDir, 'src/core/config.js')).href);
   globalThis.CONFIG = CONFIG;
-  const { encryptText, decryptText }    = await import(pathToFileURL(path.join(rootDir, 'js/crypto.js')).href);
+  const { encryptText, decryptText }    = await import(pathToFileURL(path.join(rootDir, 'src/utils/crypto.js')).href);
   globalThis.encryptText = encryptText; globalThis.decryptText = decryptText;
-  const { sanitizeText, clampNum }      = await import(pathToFileURL(path.join(rootDir, 'js/validators.js')).href);
+  const { sanitizeText, clampNum }      = await import(pathToFileURL(path.join(rootDir, 'src/utils/validators.js')).href);
   globalThis.sanitizeText = sanitizeText; globalThis.clampNum = clampNum;
-  const { getKSTToday, isDelayedKST }   = await import(pathToFileURL(path.join(rootDir, 'js/dateUtils.js')).href);
+  const { getKSTToday, isDelayedKST }   = await import(pathToFileURL(path.join(rootDir, 'src/utils/dateUtils.js')).href);
   globalThis.getKSTToday = getKSTToday; globalThis.isDelayedKST = isDelayedKST;
-  const { authClient }  = await import(pathToFileURL(path.join(rootDir, 'js/auth.js')).href);
-  const { dbClient }    = await import(pathToFileURL(path.join(rootDir, 'js/supabaseClient.js')).href);
-  const { API }         = await import(pathToFileURL(path.join(rootDir, 'js/api.js')).href);
+  const { authClient }  = await import(pathToFileURL(path.join(rootDir, 'src/auth/auth.js')).href);
+  const { dbClient }    = await import(pathToFileURL(path.join(rootDir, 'src/api/supabaseClient.js')).href);
+  const { API }         = await import(pathToFileURL(path.join(rootDir, 'src/api/api.js')).href);
 
   authClient.setSession({ access_token: 'tok', token_type: 'bearer', expires_in: 3600, user: { id: 'u1', email: 'v@test.com' } });
 

@@ -68,11 +68,11 @@ export function updateAppVisibility(isAuthenticated) {
  */
 
 import { CONFIG } from './config.js';
-import { appState } from './state.js';
-import { API } from './api.js';
-import { getKSTToday, formatKSTLiveClock } from './dateUtils.js';
-import { i18n } from './i18n.js';
-import { authClient } from './auth.js';
+import { appState } from '../state/state.js';
+import { API } from '../api/api.js';
+import { getKSTToday, formatKSTLiveClock } from '../utils/dateUtils.js';
+import { i18n } from '../utils/i18n.js';
+import { authClient } from '../auth/auth.js';
 import {
   escapeHtml,
   showToast,
@@ -88,7 +88,7 @@ import {
   renderDoColumn,
   renderSeeColumn,
   renderPlanHistoryModal
-} from './ui.js';
+} from '../ui/ui.js';
 
 // Timer tracking state for Do Execution Logger
 const timerState = {

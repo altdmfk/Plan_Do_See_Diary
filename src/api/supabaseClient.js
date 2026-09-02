@@ -4,11 +4,11 @@
  * and provides high-fidelity local PostgreSQL engine with automatic at-rest encryption and bounds sanitization.
  */
 
-import { CONFIG } from './config.js';
-import { getKSTToday } from './dateUtils.js';
-import { encryptText, decryptText } from './crypto.js';
-import { sanitizeText, clampNum } from './validators.js';
-import { authClient } from './auth.js';
+import { CONFIG } from '../core/config.js';
+import { getKSTToday } from '../utils/dateUtils.js';
+import { encryptText, decryptText } from '../utils/crypto.js';
+import { sanitizeText, clampNum } from '../utils/validators.js';
+import { authClient } from '../auth/auth.js';
 
 // Isolated Multi-Tab Session Configuration (window.sessionStorage)
 export const supabaseConfig = {
