@@ -165,71 +165,7 @@ function bindAuthForms() {
   const authPassword = document.getElementById('authPassword');
   const authErrorMsg = document.getElementById('authErrorMsg');
   const authForm = document.getElementById('authForm');
-  const rememberEmailChk = document.getElementById('remember-email');
-  const authLoginTabBtn = document.getElementById('authLoginTabBtn');
-  const authSignupTabBtn = document.getElementById('authSignupTabBtn');
-  let currentAuthMode = 'login';
   let isSubmittingAuth = false;
-
-  const setAuthMode = (mode) => {
-    currentAuthMode = mode;
-    clearAuthError();
-    if (mode === 'login') {
-      authLoginTabBtn?.classList.add('active');
-      if (authLoginTabBtn) {
-        authLoginTabBtn.style.borderBottomColor = 'var(--color-primary)';
-        authLoginTabBtn.style.color = 'var(--color-primary)';
-        authLoginTabBtn.style.fontWeight = '700';
-      }
-      authSignupTabBtn?.classList.remove('active');
-      if (authSignupTabBtn) {
-        authSignupTabBtn.style.borderBottomColor = 'transparent';
-        authSignupTabBtn.style.color = 'var(--color-text-muted)';
-        authSignupTabBtn.style.fontWeight = '600';
-      }
-      if (loginBtn) {
-        loginBtn.className = 'btn btn-primary';
-        loginBtn.type = 'submit';
-      }
-      if (signupBtn) {
-        signupBtn.className = 'btn btn-secondary';
-        signupBtn.type = 'button';
-      }
-    } else {
-      authSignupTabBtn?.classList.add('active');
-      if (authSignupTabBtn) {
-        authSignupTabBtn.style.borderBottomColor = 'var(--color-primary)';
-        authSignupTabBtn.style.color = 'var(--color-primary)';
-        authSignupTabBtn.style.fontWeight = '700';
-      }
-      authLoginTabBtn?.classList.remove('active');
-      if (authLoginTabBtn) {
-        authLoginTabBtn.style.borderBottomColor = 'transparent';
-        authLoginTabBtn.style.color = 'var(--color-text-muted)';
-        authLoginTabBtn.style.fontWeight = '600';
-      }
-      if (loginBtn) {
-        loginBtn.className = 'btn btn-secondary';
-        loginBtn.type = 'button';
-      }
-      if (signupBtn) {
-        signupBtn.className = 'btn btn-primary';
-        signupBtn.type = 'submit';
-      }
-    }
-  };
-
-  authLoginTabBtn?.addEventListener('click', (e) => {
-    e.preventDefault();
-    setAuthMode('login');
-    authEmail?.focus();
-  });
-
-  authSignupTabBtn?.addEventListener('click', (e) => {
-    e.preventDefault();
-    setAuthMode('signup');
-    authEmail?.focus();
-  });
 
   // Restore saved email on page load
   const savedEmail = getSavedEmail();
@@ -343,7 +279,7 @@ function bindAuthForms() {
   if (authForm) {
     authForm.addEventListener('submit', (e) => {
       e.preventDefault();
-      handleAuth(currentAuthMode);
+      handleAuth('login');
     });
   }
 
