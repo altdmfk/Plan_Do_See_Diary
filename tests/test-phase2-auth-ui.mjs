@@ -231,8 +231,11 @@ async function runPhase2Tests() {
     ['src/auth/auth.js', authJsContent],
     ['src/api/supabaseClient.js', scContent],
     ['src/core/app.js', appJsContent],
-    ['DOCS_AUTH.md', fs.readFileSync(path.resolve('DOCS_AUTH.md'), 'utf-8')]
+    ['README.md', fs.readFileSync(path.resolve('README.md'), 'utf-8')]
   ];
+  if (fs.existsSync(path.resolve('DOCS_AUTH.md'))) {
+    filesToScan.push(['DOCS_AUTH.md', fs.readFileSync(path.resolve('DOCS_AUTH.md'), 'utf-8')]);
+  }
 
   for (const [filename, content] of filesToScan) {
     assert(!rawJwtPattern.test(content), `No raw unmasked JWT token found in ${filename} (T07-C46)`);

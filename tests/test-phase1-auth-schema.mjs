@@ -22,9 +22,6 @@ async function runAuthSchemaTests() {
 
   const schemaPath = path.resolve('schema.sql');
   const schemaContent = fs.readFileSync(schemaPath, 'utf-8');
-  
-  const docsPath = path.resolve('DOCS_AUTH.md');
-  const docsContent = fs.readFileSync(docsPath, 'utf-8');
 
   // --- TEST 1: Schema Integrity Check ---
   console.log('--- [1] Schema Integrity Check (T07-C77, T07-C78) ---');
